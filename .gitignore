@@ -1,0 +1,72 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+env/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# data / outputs
+data/
+dataset/
+datasets/
+outputs/
+output/
+runs/
+logs/
+checkpoints/
+weights/
+models/
+
+# Vector store (rebuildable locally)
+vector_store/
+*.db
+*.sqlite
+*.sqlite3
+
+# large files
+*.pt
+*.pth
+*.ckpt
+*.pkl
+*.npy
+*.npz
+*.zip
+*.tar
+*.tar.gz
+*.rar
+
+# Secrets / env files
+.env
+.env.local
+.env.*.local
+frontend/.env
+docchat-frontend/.env
+
+# Frontend build artifacts & deps
+node_modules/
+dist/
+dist-ssr/
+*.local
+
+# Editor / OS
+.DS_Store
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Personal / progress notes (kept local only)
+DocChat项目源码精读.md
+本地开发进度_2026-05-14.md
+多人访问改造方案.md
+迁移指南_docchat-frontend替换frontend.md
+项目联调说明_2026-05-14.md
