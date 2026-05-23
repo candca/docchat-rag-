@@ -23,8 +23,10 @@ class Settings(BaseSettings):
 
     CORS_ORIGINS: list[str] = [
         "http://localhost:5173",
+        "http://localhost:5174",
         "http://localhost:3000",
         "http://127.0.0.1:5173",
+        "http://127.0.0.1:5174",
     ]
 
     MODEL_FOLDER: Path = ROOT_PATH / "models"
@@ -35,15 +37,16 @@ class Settings(BaseSettings):
 
     # DeepSeek API (set this to use API mode instead of local llama.cpp)
     DEEPSEEK_API_KEY: str = ""
+    DEEPSEEK_BASE_URL: str = "https://api.deepseek.com"
 
     # LLM Model Configuration
-    MODEL: str = "llama-3.2:1b"
+    MODEL: str = "deepseek-v4-flash"
     MAX_NEW_TOKENS: int = 512
 
     # Retrieval Configuration
     EMBEDDING_MODEL: str = "all-MiniLM-L6-v2"
     SYNTHESIS_STRATEGY: str = "tree-summarization"
-    NUM_RETRIEVALS: int = 2
+    NUM_RETRIEVALS: int = 4
     CHUNK_SIZE: int = 1000
     CHUNK_OVERLAP: int = 50
 
@@ -54,7 +57,7 @@ class Settings(BaseSettings):
     WEBSOCKET_MAX_SIZE: int = 10 * 1024 * 1024  # 10 MB
 
     # File Upload Configuration
-    ALLOWED_UPLOAD_EXTENSIONS: list[str] = [".md"]
+    ALLOWED_UPLOAD_EXTENSIONS: list[str] = [".md", ".pdf"]
 
 
 settings = Settings()

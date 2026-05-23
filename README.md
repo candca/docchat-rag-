@@ -159,7 +159,7 @@ To easily install the dependencies and start the services we created a make file
 
 Copy .𝐞𝐧𝐯.𝐞𝐱𝐚𝐦𝐩𝐥𝐞 → .𝐞𝐧𝐯 and fill it in.
 
-Copy /frontend/.𝐞𝐧𝐯.𝐞𝐱𝐚𝐦𝐩𝐥𝐞 → .𝐞𝐧𝐯 and fill it in.
+Copy /docchat-frontend/.𝐞𝐧𝐯.𝐞𝐱𝐚𝐦𝐩𝐥𝐞 → .𝐞𝐧𝐯 and fill it in.
 
 ## Using the Open-Source LLMs/Embedding Models Locally
 
@@ -232,9 +232,9 @@ The Chatbot has a UI built with `Vite`, `React` and `TypeScript`, and a backend 
 To install the UI dependencies, run:
 
 ```shell
-cd frontend
+cd docchat-frontend
 nvm use
-yarn
+npm install
 
 # Create .env file
 echo "VITE_API_URL=http://localhost:8000" > .env
@@ -248,7 +248,7 @@ cd backend && PYTHONPATH=.:../chatbot uvicorn main:app --reload
 
 To start the frontend (in a new terminal):
 ```shell
-cd frontend && yarn dev
+cd docchat-frontend && npm run dev
 ```
 
 or to start both ensuring that the backend is running and ready before launching the frontend just run:

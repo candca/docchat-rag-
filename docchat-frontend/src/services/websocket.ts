@@ -2,7 +2,7 @@ type TokenHandler = (token: string) => void
 type ErrorHandler = (error: string) => void
 
 const WS_BASE = (() => {
-  const apiUrl = import.meta.env.VITE_API_URL ?? ''
+  const apiUrl = import.meta.env.VITE_API_URL ?? 'http://localhost:8000'
   if (apiUrl) {
     return apiUrl.replace(/^http/, 'ws')
   }
@@ -60,7 +60,12 @@ export class ChatWebSocket {
     })
   }
 
-  async sendMessage(text: string, rag: boolean, documentIds?: string[]): Promise<void> {
+  async sendMessage(
+    text: string,
+    rag: boolean,
+    documentIds?: string[],
+    chatHistory?: string[],
+  ): Promise<void> {
     try {
       await this.connect()
       if (this.ws?.readyState === WebSocket.OPEN) {
@@ -68,6 +73,9 @@ export class ChatWebSocket {
         if (documentIds && documentIds.length > 0) {
           // 后端字段名是 document_ids（snake_case）
           payload.document_ids = documentIds
+        }
+        if (chatHistory && chatHistory.length > 0) {
+          payload.chat_history = chatHistory
         }
         this.ws.send(JSON.stringify(payload))
       } else {

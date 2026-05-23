@@ -138,9 +138,10 @@ def build_memory_index(
         chunks = split_chunks([doc], chunk_size=chunk_size, chunk_overlap=chunk_overlap)
 
         # inject document_id + version_hash into every chunk's metadata
-        for chunk in chunks:
+        for idx, chunk in enumerate(chunks):
             chunk.metadata["document_id"] = doc_id
             chunk.metadata["version_hash"] = ver_hash
+            chunk.metadata["chunk_index"] = idx
 
         chunk_ids = vector_database.from_chunks(chunks)
 

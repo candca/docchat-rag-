@@ -16,3 +16,9 @@ class DocumentUploadResponse(BaseModel):
 
 class DocumentListResponse(BaseModel):
     documents: list[DocumentInfo]
+
+
+class DocumentContentResponse(BaseModel):
+    document_id: str
+    filename: str
+    content: str

@@ -4,6 +4,7 @@ import { ChatHeader } from '@/components/chat/chat-header'
 import { ChatViewport } from '@/components/chat/chat-viewport'
 import { ChatInput } from '@/components/chat/chat-input'
 import { DocumentList } from '@/components/chat/document-list'
+import { ConversationHistory } from '@/components/chat/conversation-history'
 import { CitationPanel } from '@/components/chat/citation-panel'
 import { useAppStore } from '@/stores/appStore'
 import { useChat } from '@/hooks/useChat'
@@ -14,14 +15,27 @@ function App() {
     theme,
     activeCitationIndex,
     activeDocId,
+    activeConversationId,
+    conversations,
     selectedDocIds,
     setActiveCitationIndex,
     setActiveDocId,
+    setSelectedDocIds,
+    selectConversation,
+    deleteConversation,
     toggleDocSelected,
     toggleTheme,
   } = useAppStore()
 
-  const { messages, isThinking, isStreaming, sendMessage, stop, clearMessages } = useChat()
+  const {
+    messages,
+    isThinking,
+    isStreaming,
+    sendMessage,
+    stop,
+    startNewChat,
+    clearMessages,
+  } = useChat()
   const { documents, error, addDocument, removeDocument } = useDocuments()
 
   // 同步 theme 到 <html> class
@@ -50,6 +64,14 @@ function App() {
     clearMessages()
   }, [clearMessages])
 
+  const handleSelectDocument = useCallback(
+    (id: string) => {
+      setActiveDocId(id)
+      setSelectedDocIds([id])
+    },
+    [setActiveDocId, setSelectedDocIds],
+  )
+
   const handleCitationClick = useCallback(
     (index: number) => {
       setActiveCitationIndex(index)
@@ -62,12 +84,18 @@ function App() {
       <div className="flex h-screen w-screen overflow-hidden bg-background text-foreground">
         {/* 左栏：文档列表 (260px) */}
         <div className="w-[260px] shrink-0 overflow-hidden flex flex-col">
+          <ConversationHistory
+            conversations={conversations}
+            activeConversationId={activeConversationId}
+            onSelect={selectConversation}
+            onDelete={deleteConversation}
+          />
           <DocumentList
             documents={documents}
             activeDocId={activeDocId}
             selectedDocIds={selectedDocIds}
             onToggleSelected={toggleDocSelected}
-            onSelect={setActiveDocId}
+            onSelect={handleSelectDocument}
             onDelete={removeDocument}
             onUpload={addDocument}
           />
@@ -83,7 +111,7 @@ function App() {
         <div className="flex flex-1 flex-col min-w-0 overflow-hidden border-x border-border">
           <ChatHeader
             theme={theme}
-            onNewChat={handleClear}
+            onNewChat={startNewChat}
             onClearHistory={handleClear}
             onToggleTheme={toggleTheme}
           />
@@ -102,7 +130,7 @@ function App() {
         </div>
 
         {/* 右栏：引用面板 (320px) */}
-        <div className="w-[320px] shrink-0 overflow-hidden">
+        <div className="relative z-20 w-[320px] shrink-0 overflow-visible">
           <CitationPanel
             citations={citations}
             activeCitationIndex={activeCitationIndex}

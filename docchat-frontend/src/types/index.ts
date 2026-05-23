@@ -24,6 +24,15 @@ export interface Message {
   timestamp: number;
 }
 
+/** 一段可持久化的聊天会话 */
+export interface Conversation {
+  id: string;
+  title: string;
+  messages: Message[];
+  createdAt: number;
+  updatedAt: number;
+}
+
 /** 左栏文档列表中的一项 */
 export interface Document {
   /** 对应后端 document_id */

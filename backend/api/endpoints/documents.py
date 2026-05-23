@@ -4,17 +4,33 @@ from typing import Annotated
 from bot.memory.document_registry import DocumentRegistry
 from bot.memory.vector_database.id_generator import generate_id
 from core.config import settings
-from document_loader.loader import DirectoryLoader
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from document_loader.loader import DirectoryLoader, load_file_text
+from fastapi import APIRouter, File, HTTPException, Query, UploadFile
+from fastapi.responses import FileResponse
 from helpers.log import get_logger
 from memory_builder import split_chunks
-from schemas.documents import DocumentInfo, DocumentListResponse, DocumentUploadResponse
+from schemas.documents import DocumentContentResponse, DocumentInfo, DocumentListResponse, DocumentUploadResponse
 
 from api.deps import SessionDep, VectorDatabaseDep
 
 logger = get_logger(__name__)
 
 router = APIRouter()
+
+
+def get_document_record_by_filename(session: SessionDep, filename: str):
+    registry = DocumentRegistry(session)
+    record = registry.get_by_filename(filename)
+    if record is None:
+        raise HTTPException(status_code=404, detail=f"Document '{filename}' not found.")
+    return record
+
+
+def get_source_file_path(record) -> Path:
+    file_path = Path(record.source) if record.source else settings.DOCS_PATH / record.filename
+    if not file_path.exists() or not file_path.is_file():
+        raise HTTPException(status_code=404, detail=f"Source file for '{record.filename}' not found.")
+    return file_path
 
 
 @router.post(
@@ -92,6 +108,11 @@ async def upload_document(
         # Extract the loaded document (should be exactly one)
         document = loaded_docs[0]
         page_content = document.page_content
+        if not page_content.strip():
+            raise HTTPException(
+                status_code=400,
+                detail=f"No extractable text found in '{file.filename}'. The PDF may be scanned or image-only.",
+            )
 
     except Exception as exc:
         logger.warning(
@@ -123,9 +144,10 @@ async def upload_document(
     chunks = split_chunks([document], chunk_size=settings.CHUNK_SIZE, chunk_overlap=settings.CHUNK_OVERLAP)
 
     # Inject document_id + version_hash into every chunk's metadata
-    for chunk in chunks:
+    for idx, chunk in enumerate(chunks):
         chunk.metadata["document_id"] = document_id
         chunk.metadata["version_hash"] = version_hash
+        chunk.metadata["chunk_index"] = idx
 
     num_chunks = len(chunks)
     logger.info(f"Number of generated chunks: {num_chunks}")
@@ -169,6 +191,53 @@ async def list_documents(session: SessionDep):
         for record in registry.get_all()
     ]
     return DocumentListResponse(documents=documents)
+
+
+@router.get("/documents/content", response_model=DocumentContentResponse)
+async def get_document_content(session: SessionDep, filename: str = Query(..., min_length=1)):
+    """
+    Return the stored source text for a document by filename.
+
+    The filename is resolved through the document registry instead of trusting
+    a client-provided path, so callers cannot read arbitrary files.
+    """
+    record = get_document_record_by_filename(session, filename)
+    file_path = get_source_file_path(record)
+
+    if file_path.suffix.lower() == ".pdf":
+        content = load_file_text(file_path)
+    else:
+        try:
+            content = file_path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            content = file_path.read_text(encoding="utf-8", errors="replace")
+
+    return DocumentContentResponse(
+        document_id=record.document_id,
+        filename=record.filename,
+        content=content,
+    )
+
+
+@router.get("/documents/file")
+async def get_document_file(session: SessionDep, filename: str = Query(..., min_length=1)):
+    """
+    Return the original stored document as an inline file preview.
+    """
+    record = get_document_record_by_filename(session, filename)
+    file_path = get_source_file_path(record)
+    media_type = record.content_type or "application/octet-stream"
+    if file_path.suffix.lower() == ".pdf":
+        media_type = "application/pdf"
+    elif file_path.suffix.lower() == ".md":
+        media_type = "text/markdown; charset=utf-8"
+
+    return FileResponse(
+        path=file_path,
+        media_type=media_type,
+        filename=record.filename,
+        content_disposition_type="inline",
+    )
 
 
 @router.delete(

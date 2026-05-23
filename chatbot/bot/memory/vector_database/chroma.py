@@ -341,6 +341,27 @@ class Chroma:
             logger.error("Error deleting chunks for document_id=%s: %s", document_id, e)
             raise
 
+    def get_chunks_by_document_id(self, document_id: str, limit: int = 3) -> list[Document]:
+        """
+        Return the first stored chunks for a document, ordered by chunk_index when available.
+        """
+        results = self.collection.get(
+            where={"document_id": document_id},
+            include=["documents", "metadatas"],
+        )
+        documents = results.get("documents") or []
+        metadatas = results.get("metadatas") or []
+        rows = [
+            (doc, metadata or {})
+            for doc, metadata in zip(documents, metadatas, strict=False)
+            if doc
+        ]
+        rows.sort(key=lambda row: row[1].get("chunk_index", 10**9))
+        return [
+            Document(page_content=doc, metadata=metadata)
+            for doc, metadata in rows[:limit]
+        ]
+
     def similarity_search_with_threshold(
         self,
         query: str,
@@ -378,7 +399,7 @@ class Chroma:
             if len(docs_and_scores) == 0:
                 logger.warning(f"No relevant docs were retrieved using the relevance score threshold {threshold}")
 
-            docs_and_scores = sorted(docs_and_scores, key=lambda x: x[1], reverse=True)
+        docs_and_scores = sorted(docs_and_scores, key=lambda x: x[1], reverse=True)
 
         retrieved_contents = [doc[0] for doc in docs_and_scores]
         sources = []
@@ -387,7 +408,7 @@ class Chroma:
                 {
                     "score": round(score, 3),
                     "document": doc.metadata.get("source"),
-                    "content_preview": f"{doc.page_content[0:256]}...",
+                    "content_preview": doc.page_content,
                 }
             )
 

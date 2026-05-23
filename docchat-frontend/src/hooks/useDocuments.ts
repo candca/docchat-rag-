@@ -79,10 +79,13 @@ export function useDocuments() {
       setError(null)
       setUploading({ filename: file.name, progress: 0 })
       try {
-        await uploadDocument(file, (pct) => {
+        const uploaded = await uploadDocument(file, (pct) => {
           if (mountedRef.current) setUploading({ filename: file.name, progress: pct })
         })
         await fetchDocuments()
+        const { setActiveDocId, setSelectedDocIds } = useAppStore.getState()
+        setActiveDocId(uploaded.document_id)
+        setSelectedDocIds([uploaded.document_id])
       } catch (err: unknown) {
         const axiosErr = err as { response?: { status?: number; data?: { detail?: string } } }
         const msg =

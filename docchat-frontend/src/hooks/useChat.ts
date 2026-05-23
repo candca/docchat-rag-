@@ -8,6 +8,25 @@ function genId(): string {
   return Math.random().toString(36).slice(2, 10)
 }
 
+function buildChatHistory(messages: Message[]): string[] {
+  const history: string[] = []
+  let pendingQuestion: string | null = null
+
+  for (const message of messages) {
+    if (message.role === 'user') {
+      pendingQuestion = message.content
+      continue
+    }
+
+    if (message.role === 'assistant' && pendingQuestion && message.content.trim()) {
+      history.push(`question: ${pendingQuestion}, answer: ${message.content}`)
+      pendingQuestion = null
+    }
+  }
+
+  return history.slice(-4)
+}
+
 // ---------------------------------------------------------------------------
 // 解析后端非结构化检索预览 → Citation[]
 //
@@ -25,11 +44,21 @@ function parseCitations(retrievalText: string): Citation[] {
   return blocks
     .map((block, i) => {
       const docName = block.match(/^([^*\n]+?)\*\*/)?.[1]?.trim() ?? ''
-      // Preview 后的 ">..." 行（可能跨多行，直到出现空行或下一个 source）
-      const snippet = block
-        .match(/\*\*Preview:\*\*\s*\n?\s*>\s*([\s\S]+?)(?:\n\s*\n|$)/)?.[1]
+      // Preview 后的内容属于当前 source block；完整 chunk 可能包含空行。
+      const rawSnippet = block
+        .match(/\*\*Preview:\*\*\s*\n?\s*>?\s*([\s\S]+)$/)?.[1]
         ?.trim()
-      return { index: i + 1, docName, snippet } as Citation
+      const snippet = rawSnippet
+        ?.replace(/\n\s*>/g, '\n')
+        .replace(/\s*\.\.\.\s*$/, '')
+        .trim()
+      const page = snippet?.match(/##\s*Page\s+(\d+)/i)?.[1]
+      return {
+        index: i + 1,
+        docName,
+        snippet,
+        page: page ? Number(page) : undefined,
+      } as Citation
     })
     .filter((c) => c.docName.length > 0)
 }
@@ -37,7 +66,13 @@ function parseCitations(retrievalText: string): Citation[] {
 type StreamPhase = 'retrieval' | 'answer'
 
 export function useChat() {
-  const { messages, addMessage, updateMessage, clearMessages } = useAppStore()
+  const {
+    messages,
+    addMessage,
+    updateMessage,
+    clearMessages,
+    startNewConversation,
+  } = useAppStore()
 
   const [isThinking, setIsThinking] = useState(false)
   const [isStreaming, setIsStreaming] = useState(false)
@@ -151,6 +186,8 @@ export function useChat() {
     abortedRef.current = false
     phaseRef.current = 'retrieval'
     retrievalBufferRef.current = ''
+    const previousMessages = useAppStore.getState().messages
+    const chatHistory = buildChatHistory(previousMessages)
 
     const userMsg: Message = {
       id: genId(),
@@ -171,12 +208,19 @@ export function useChat() {
     })
 
     setThinking(true)
-    const { selectedDocIds } = useAppStore.getState()
-    void wsRef.current?.sendMessage(content, true /* rag */, selectedDocIds)
+    const { selectedDocIds, activeDocId } = useAppStore.getState()
+    const documentIds = selectedDocIds.length > 0 ? selectedDocIds : activeDocId ? [activeDocId] : []
+    void wsRef.current?.sendMessage(content, true /* rag */, documentIds, chatHistory)
   }
 
   const handleClearMessages = () => {
     clearMessages()
+    wsRef.current?.reconnect()
+    void resetChatHistory()
+  }
+
+  const handleStartNewChat = () => {
+    startNewConversation()
     wsRef.current?.reconnect()
     void resetChatHistory()
   }
@@ -187,6 +231,7 @@ export function useChat() {
     isStreaming,
     sendMessage,
     stop,
+    startNewChat: handleStartNewChat,
     clearMessages: handleClearMessages,
   }
 }

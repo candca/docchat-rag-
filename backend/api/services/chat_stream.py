@@ -18,6 +18,34 @@ from api.deps import ChatHistoryDep, LamaCppClientDep, VectorDatabaseDep
 logger = get_logger(__name__)
 
 
+OVERVIEW_QUERY_TERMS = (
+    "这篇文章",
+    "这篇论文",
+    "讲了什么",
+    "主要内容",
+    "总结",
+    "概述",
+    "summary",
+    "summarize",
+    "overview",
+    "what is this paper about",
+    "what is the paper about",
+)
+
+
+def is_overview_query(text: str) -> bool:
+    normalized = text.lower()
+    return any(term in normalized for term in OVERVIEW_QUERY_TERMS)
+
+
+def source_from_chunk(chunk, score: float = 1.0) -> dict:
+    return {
+        "score": score,
+        "document": chunk.metadata.get("source"),
+        "content_preview": chunk.page_content,
+    }
+
+
 # TODO: https://github.com/umbertogriffo/rag-chatbot/pull/10#discussion_r2936567672
 async def stream_chat_response(
     websocket: WebSocket, llm_client: LamaCppClientDep, query: ChatRequest, chat_history: ChatHistoryDep
@@ -100,8 +128,25 @@ async def stream_rag_response(
             )
 
         retrieved_contents, sources = index.similarity_search_with_threshold(
-            query=refined_user_input, k=settings.NUM_RETRIEVALS, filter=retrieval_filter
+            query=refined_user_input,
+            k=settings.NUM_RETRIEVALS,
+            filter=retrieval_filter,
+            threshold=None if retrieval_filter else 0.2,
         )
+
+        if retrieval_filter and query.document_ids and is_overview_query(query.text):
+            pinned_chunks = []
+            for document_id in query.document_ids:
+                pinned_chunks.extend(index.get_chunks_by_document_id(document_id, limit=3))
+
+            seen = {chunk.page_content for chunk in retrieved_contents}
+            for chunk in pinned_chunks:
+                if chunk.page_content in seen:
+                    continue
+                retrieved_contents.insert(0, chunk)
+                sources.insert(0, source_from_chunk(chunk))
+                seen.add(chunk.page_content)
+
         if retrieved_contents:
             retrieval_response += "Here are the retrieved text chunks with a content preview: \n\n"
 

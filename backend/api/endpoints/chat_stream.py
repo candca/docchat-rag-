@@ -1,9 +1,11 @@
 from fastapi import APIRouter, Response, WebSocket, WebSocketDisconnect
-from helpers.log import get_logger
-from schemas.chat import ChatRequest
 
 from api.deps import ChatHistoryDep, LamaCppClientDep, VectorDatabaseDep
 from api.services.chat_stream import stream_chat_response, stream_rag_response
+from bot.conversation.chat_history import ChatHistory
+from core.config import settings
+from helpers.log import get_logger
+from schemas.chat import ChatRequest
 
 logger = get_logger(__name__)
 
@@ -34,10 +36,16 @@ async def chat_stream(
             data = await websocket.receive_json()
             logger.info(f"Received data: {data}")
             query = ChatRequest(**data)
+            effective_chat_history = chat_history
+            if query.chat_history is not None:
+                effective_chat_history = ChatHistory(
+                    messages=query.chat_history[-settings.CHAT_HISTORY_LENGTH :],
+                    total_length=settings.CHAT_HISTORY_LENGTH,
+                )
             if query.rag:
-                await stream_rag_response(websocket, llm_client, query, chat_history, index)
+                await stream_rag_response(websocket, llm_client, query, effective_chat_history, index)
             else:
-                await stream_chat_response(websocket, llm_client, query, chat_history)
+                await stream_chat_response(websocket, llm_client, query, effective_chat_history)
     except WebSocketDisconnect:
         logger.info("WebSocket client disconnected")
     except Exception as e:

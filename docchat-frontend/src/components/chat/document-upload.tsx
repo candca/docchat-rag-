@@ -38,7 +38,7 @@ export function DocumentUpload({
   onSelectFile,
   externalProgress,
   externalError,
-  accept = ".pdf,.docx,.md",
+  accept = ".md,.pdf",
   maxSizeMB = 50,
   disabled = false,
 }: DocumentUploadProps) {

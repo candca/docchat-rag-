@@ -1,11 +1,14 @@
 import { create } from 'zustand'
-import type { Message, Document, Citation } from '@/types'
+import { createJSONStorage, persist } from 'zustand/middleware'
+import type { Message, Document, Citation, Conversation } from '@/types'
 
 // Re-export Citation so consumers can import from here if needed
 export type { Citation }
 
 interface AppState {
   messages: Message[]
+  conversations: Conversation[]
+  activeConversationId: string | null
   documents: Document[]
   activeCitationIndex: number | null
   activeDocId: string | null
@@ -16,6 +19,10 @@ interface AppState {
   addMessage: (msg: Message) => void
   updateMessage: (id: string, updates: Partial<Omit<Message, 'id'>>) => void
   clearMessages: () => void
+  startNewConversation: () => void
+  selectConversation: (id: string) => void
+  deleteConversation: (id: string) => void
+  clearAllConversations: () => void
 
   setDocuments: (docs: Document[]) => void
   addDocument: (doc: Document) => void
@@ -29,8 +36,49 @@ interface AppState {
   toggleTheme: () => void
 }
 
-export const useAppStore = create<AppState>((set) => ({
+function genId(): string {
+  return Math.random().toString(36).slice(2, 10)
+}
+
+function titleFromMessages(messages: Message[]): string {
+  const firstUser = messages.find((m) => m.role === 'user' && m.content.trim())
+  if (!firstUser) return '新对话'
+  const title = firstUser.content.trim().replace(/\s+/g, ' ')
+  return title.length > 24 ? `${title.slice(0, 24)}...` : title
+}
+
+function sortConversations(conversations: Conversation[]): Conversation[] {
+  return [...conversations].sort((a, b) => b.updatedAt - a.updatedAt)
+}
+
+function syncActiveConversation(state: AppState, messages: Message[]) {
+  const now = Date.now()
+  const activeId = state.activeConversationId ?? genId()
+  const current = state.conversations.find((c) => c.id === activeId)
+  const activeConversation: Conversation = {
+    id: activeId,
+    title: titleFromMessages(messages),
+    messages,
+    createdAt: current?.createdAt ?? now,
+    updatedAt: now,
+  }
+
+  return {
+    messages,
+    activeConversationId: activeId,
+    conversations: sortConversations([
+      activeConversation,
+      ...state.conversations.filter((c) => c.id !== activeId),
+    ]),
+  }
+}
+
+export const useAppStore = create<AppState>()(
+  persist(
+    (set) => ({
   messages: [],
+  conversations: [],
+  activeConversationId: null,
   documents: [],
   activeCitationIndex: null,
   activeDocId: null,
@@ -38,17 +86,69 @@ export const useAppStore = create<AppState>((set) => ({
   theme: 'dark',
 
   addMessage: (msg) =>
-    set((s) => ({ messages: [...s.messages, msg] })),
+    set((s) => syncActiveConversation(s, [...s.messages, msg])),
 
   updateMessage: (id, updates) =>
-    set((s) => ({
-      messages: s.messages.map((m) =>
+    set((s) => {
+      const messages = s.messages.map((m) =>
         m.id === id ? { ...m, ...updates } : m,
-      ),
-    })),
+      )
+      return syncActiveConversation(s, messages)
+    }),
 
   // Also clears activeCitationIndex so the right panel resets
-  clearMessages: () => set({ messages: [], activeCitationIndex: null }),
+  clearMessages: () =>
+    set((s) => {
+      if (!s.activeConversationId) {
+        return { messages: [], activeCitationIndex: null }
+      }
+      return {
+        ...syncActiveConversation(s, []),
+        activeCitationIndex: null,
+      }
+    }),
+
+  startNewConversation: () =>
+    set({
+      activeConversationId: null,
+      messages: [],
+      activeCitationIndex: null,
+    }),
+
+  selectConversation: (id) =>
+    set((s) => {
+      const conversation = s.conversations.find((c) => c.id === id)
+      if (!conversation) return {}
+      return {
+        activeConversationId: id,
+        messages: conversation.messages,
+        activeCitationIndex: null,
+      }
+    }),
+
+  deleteConversation: (id) =>
+    set((s) => {
+      const conversations = s.conversations.filter((c) => c.id !== id)
+      if (s.activeConversationId !== id) {
+        return { conversations }
+      }
+
+      const next = conversations[0]
+      return {
+        conversations,
+        activeConversationId: next?.id ?? null,
+        messages: next?.messages ?? [],
+        activeCitationIndex: null,
+      }
+    }),
+
+  clearAllConversations: () =>
+    set({
+      conversations: [],
+      activeConversationId: null,
+      messages: [],
+      activeCitationIndex: null,
+    }),
 
   setDocuments: (docs) =>
     set((s) => {
@@ -88,4 +188,17 @@ export const useAppStore = create<AppState>((set) => ({
   setSelectedDocIds: (ids) => set({ selectedDocIds: ids }),
   toggleTheme: () =>
     set((s) => ({ theme: s.theme === 'dark' ? 'light' : 'dark' })),
-}))
+    }),
+    {
+      name: 'docchat-app-state',
+      storage: createJSONStorage(() => localStorage),
+      partialize: (state) => ({
+        messages: state.messages,
+        conversations: state.conversations,
+        activeConversationId: state.activeConversationId,
+        selectedDocIds: state.selectedDocIds,
+        theme: state.theme,
+      }),
+    },
+  ),
+)

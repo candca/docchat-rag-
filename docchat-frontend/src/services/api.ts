@@ -1,6 +1,6 @@
 import axios from 'axios'
 
-const API_BASE = import.meta.env.VITE_API_URL ?? ''
+const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:8000'
 
 export interface DocumentInfo {
   document_id: string
@@ -16,6 +16,12 @@ interface DocumentUploadResponse {
 
 interface DocumentListResponse {
   documents: DocumentInfo[]
+}
+
+export interface DocumentContentResponse {
+  document_id: string
+  filename: string
+  content: string
 }
 
 export async function uploadDocument(
@@ -46,6 +52,18 @@ export async function listDocuments(): Promise<DocumentListResponse> {
 
 export async function deleteDocument(documentId: string): Promise<void> {
   await axios.delete(`${API_BASE}/documents/${documentId}`)
+}
+
+export async function getDocumentContent(filename: string): Promise<DocumentContentResponse> {
+  const response = await axios.get<DocumentContentResponse>(`${API_BASE}/documents/content`, {
+    params: { filename },
+  })
+  return response.data
+}
+
+export function getDocumentFileUrl(filename: string): string {
+  const params = new URLSearchParams({ filename })
+  return `${API_BASE}/documents/file?${params.toString()}`
 }
 
 export async function resetChatHistory(): Promise<void> {

@@ -10,6 +10,40 @@ from unstructured.partition.auto import partition
 logger = get_logger(__name__)
 
 
+def load_file_text(doc_path: Path, **partition_kwargs: Any) -> str:
+    suffix = doc_path.suffix.lower()
+    if suffix == ".pdf":
+        return load_pdf_text(doc_path)
+
+    elements = partition(filename=str(doc_path), **partition_kwargs)
+    return "\n\n".join([str(el) for el in elements])
+
+
+def load_pdf_text(doc_path: Path) -> str:
+    try:
+        from pypdf import PdfReader
+
+        reader = PdfReader(str(doc_path))
+        pages = []
+        for idx, page in enumerate(reader.pages, start=1):
+            text = page.extract_text() or ""
+            if text.strip():
+                pages.append(f"## Page {idx}\n\n{text.strip()}")
+
+        if pages:
+            return "\n\n".join(pages)
+    except Exception as exc:
+        logger.warning("pypdf failed to parse %s: %s", doc_path, exc)
+
+    try:
+        from docling.document_converter import DocumentConverter
+
+        result = DocumentConverter().convert(str(doc_path))
+        return result.document.export_to_markdown()
+    except Exception as exc:
+        raise ValueError(f"Failed to parse PDF '{doc_path.name}': {exc}") from exc
+
+
 class DirectoryLoader:
     """Load documents from a directory."""
 
@@ -85,10 +119,9 @@ class DirectoryLoader:
                 # Loads document from the specified path.
                 # The unstructured `partition` function and will automatically detect the file type with libmagic to
                 # determine the file's type and route it to the appropriate partitioning function.
-                elements = partition(filename=str(doc_path), **self.partition_kwargs)
+                text = load_file_text(doc_path, **self.partition_kwargs)
                 # Note: The `partition` function returns a list of elements that we can filter by type based on the
                 # specific format.
-                text = "\n\n".join([str(el) for el in elements])
                 docs.extend([Document(page_content=text, metadata={"source": str(doc_path)})])
             finally:
                 if pbar:

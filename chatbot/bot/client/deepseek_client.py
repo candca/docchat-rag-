@@ -1,7 +1,10 @@
 import asyncio
+import json
+import time
 from pathlib import Path
 
-from openai import OpenAI
+import requests
+from helpers.log import get_logger
 
 from bot.client.prompt import (
     CTX_PROMPT_TEMPLATE,
@@ -16,6 +19,8 @@ from bot.client.prompt import (
     generate_refined_ctx_prompt,
 )
 
+logger = get_logger(__name__)
+
 
 class _DeepSeekModelSettings:
     system_template: str = SYSTEM_TEMPLATE
@@ -27,10 +32,19 @@ class _DeepSeekModelSettings:
 class DeepSeekClient:
     """LLM client that calls the DeepSeek API (OpenAI-compatible interface)."""
 
-    def __init__(self, api_key: str, model: str = "deepseek-chat"):
+    def __init__(
+        self,
+        api_key: str,
+        model: str = "deepseek-v4-flash",
+        base_url: str = "https://api.deepseek.com",
+    ):
         self.model = model
         self.model_settings = _DeepSeekModelSettings()
-        self._client = OpenAI(api_key=api_key, base_url="https://api.deepseek.com")
+        self.base_url = base_url.rstrip("/")
+        self._headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
 
     def close(self):
         pass
@@ -40,15 +54,16 @@ class DeepSeekClient:
     # ------------------------------------------------------------------
 
     def generate_answer(self, prompt: str, max_new_tokens: int = 512) -> str:
-        response = self._client.chat.completions.create(
-            model=self.model,
-            messages=[
-                {"role": "system", "content": self.model_settings.system_template},
-                {"role": "user", "content": prompt},
-            ],
-            max_tokens=max_new_tokens,
+        start_time = time.time()
+        response = requests.post(
+            f"{self.base_url}/chat/completions",
+            headers=self._headers,
+            json=self._payload(prompt, max_new_tokens, stream=False),
+            timeout=120,
         )
-        return response.choices[0].message.content or ""
+        response.raise_for_status()
+        logger.info("DeepSeek completion completed in %.2f seconds", time.time() - start_time)
+        return response.json()["choices"][0]["message"].get("content") or ""
 
     async def async_generate_answer(self, prompt: str, max_new_tokens: int = 512) -> str:
         loop = asyncio.get_event_loop()
@@ -59,16 +74,17 @@ class DeepSeekClient:
     # ------------------------------------------------------------------
 
     def start_answer_iterator_streamer(self, prompt: str, max_new_tokens: int = 512):
-        stream = self._client.chat.completions.create(
-            model=self.model,
-            messages=[
-                {"role": "system", "content": self.model_settings.system_template},
-                {"role": "user", "content": prompt},
-            ],
-            max_tokens=max_new_tokens,
+        start_time = time.time()
+        response = requests.post(
+            f"{self.base_url}/chat/completions",
+            headers=self._headers,
+            json=self._payload(prompt, max_new_tokens, stream=True),
             stream=True,
+            timeout=120,
         )
-        return stream
+        response.raise_for_status()
+        logger.info("DeepSeek stream opened in %.2f seconds", time.time() - start_time)
+        return self._iter_stream_tokens(response)
 
     async def async_start_answer_iterator_streamer(self, prompt: str, max_new_tokens: int = 512):
         loop = asyncio.get_event_loop()
@@ -76,7 +92,34 @@ class DeepSeekClient:
 
     @staticmethod
     def parse_token(chunk) -> str:
+        if isinstance(chunk, str):
+            return chunk
         return chunk.choices[0].delta.content or ""
+
+    def _payload(self, prompt: str, max_new_tokens: int, stream: bool) -> dict:
+        return {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": self.model_settings.system_template},
+                {"role": "user", "content": prompt},
+            ],
+            "max_tokens": max_new_tokens,
+            "stream": stream,
+        }
+
+    @staticmethod
+    def _iter_stream_tokens(response: requests.Response):
+        try:
+            for line in response.iter_lines(decode_unicode=True):
+                if not line or not line.startswith("data:"):
+                    continue
+                data = line.removeprefix("data:").strip()
+                if data == "[DONE]":
+                    break
+                payload = json.loads(data)
+                yield payload["choices"][0].get("delta", {}).get("content") or ""
+        finally:
+            response.close()
 
     # ------------------------------------------------------------------
     # Prompt generation (same templates as LamaCppClient)

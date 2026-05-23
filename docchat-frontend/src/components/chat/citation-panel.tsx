@@ -1,7 +1,8 @@
-import { useEffect, useRef } from "react";
-import { Quote, ExternalLink, Hash, FileText, X } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Quote, ExternalLink, Hash, FileText, X, Loader2, AlertCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { Citation } from "@/types";
+import { getDocumentContent, getDocumentFileUrl } from "@/services/api";
 
 export interface CitationPanelProps {
   /** 全部引用列表 */
@@ -28,6 +29,47 @@ export function CitationPanel({
   className,
 }: CitationPanelProps) {
   const itemRefs = useRef<Map<number, HTMLLIElement>>(new Map());
+  const [sourceView, setSourceView] = useState<{
+    citation: Citation;
+    content?: string;
+    fileUrl: string;
+    filename: string;
+    mode: "pdf" | "text";
+  } | null>(null);
+  const [sourceLoading, setSourceLoading] = useState(false);
+  const [sourceError, setSourceError] = useState<string | null>(null);
+
+  const handleViewSource = async (citation: Citation) => {
+    onJumpToSource?.(citation);
+    setSourceError(null);
+    setSourceLoading(true);
+    try {
+      const isPdf = citation.docName.toLowerCase().endsWith(".pdf");
+      if (isPdf) {
+        setSourceView({
+          citation,
+          fileUrl: getDocumentFileUrl(citation.docName),
+          filename: citation.docName,
+          mode: "pdf",
+        });
+        return;
+      }
+
+      const data = await getDocumentContent(citation.docName);
+      setSourceView({
+        citation,
+        content: data.content,
+        fileUrl: getDocumentFileUrl(data.filename),
+        filename: data.filename,
+        mode: "text",
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "原文加载失败";
+      setSourceError(message);
+    } finally {
+      setSourceLoading(false);
+    }
+  };
 
   // 监听激活索引变化,执行平滑滚动
   useEffect(() => {
@@ -39,7 +81,7 @@ export function CitationPanel({
   }, [activeCitationIndex]);
 
   return (
-    <aside className={cn("flex h-full w-full flex-col bg-background border-l border-border", className)}>
+    <aside className={cn("relative flex h-full w-full flex-col bg-background border-l border-border", className)}>
       {/* 顶部标题栏 */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-border">
         <div className="flex items-center gap-2">
@@ -141,11 +183,15 @@ export function CitationPanel({
                   >
                     <button
                       type="button"
-                      onClick={() => onJumpToSource?.(cite)}
+                      onClick={() => handleViewSource(cite)}
                       className="flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[11px] font-medium text-muted-foreground hover:bg-accent hover:text-accent-foreground"
                     >
+                      {sourceLoading ? (
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                      ) : (
+                        <ExternalLink className="h-3 w-3" />
+                      )}
                       查看原文
-                      <ExternalLink className="h-3 w-3" />
                     </button>
                   </div>
                 </li>
@@ -167,7 +213,253 @@ export function CitationPanel({
           </p>
         </div>
       )}
+
+      {sourceError && (
+        <div className="border-t border-destructive/20 bg-destructive/5 px-4 py-3 text-[12px] text-destructive">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="h-3.5 w-3.5" />
+            <span>{sourceError}</span>
+          </div>
+        </div>
+      )}
+
+      {sourceView && (
+        <SourceDrawer
+          filename={sourceView.filename}
+          content={sourceView.content}
+          fileUrl={sourceView.fileUrl}
+          mode={sourceView.mode}
+          snippet={sourceView.citation.snippet}
+          page={sourceView.citation.page}
+          onClose={() => setSourceView(null)}
+        />
+      )}
     </aside>
+  );
+}
+
+function normalizeText(text: string): string {
+  return text.replace(/\s+/g, " ").trim();
+}
+
+function compactTextWithMap(text: string) {
+  const chars: string[] = [];
+  const map: number[] = [];
+  for (let idx = 0; idx < text.length; idx += 1) {
+    const char = text[idx];
+    if (/\s/.test(char)) continue;
+    chars.push(char.toLowerCase());
+    map.push(idx);
+  }
+  return { compact: chars.join(""), map };
+}
+
+function findSnippetRange(content: string, snippet?: string) {
+  if (!snippet) return null;
+
+  const exactIdx = content.indexOf(snippet);
+  if (exactIdx !== -1) {
+    return { start: exactIdx, end: exactIdx + snippet.length };
+  }
+
+  const lowerContent = content.toLowerCase();
+  const lowerSnippet = snippet.toLowerCase();
+  const lowerIdx = lowerContent.indexOf(lowerSnippet);
+  if (lowerIdx !== -1) {
+    return { start: lowerIdx, end: lowerIdx + snippet.length };
+  }
+
+  const source = compactTextWithMap(content);
+  const target = compactTextWithMap(snippet);
+  if (!target.compact) return null;
+
+  const compactIdx = source.compact.indexOf(target.compact);
+  if (compactIdx === -1) return null;
+
+  const start = source.map[compactIdx];
+  const end = source.map[compactIdx + target.compact.length - 1] + 1;
+  return { start, end };
+}
+
+function getPdfSearchTerm(snippet?: string) {
+  if (!snippet) return "";
+  const normalized = normalizeText(snippet)
+    .replace(/^#+\s*Page\s+\d+\s*/i, "")
+    .replace(/[<>{}[\]\\^`|]/g, " ")
+    .trim();
+
+  const sentence =
+    normalized.match(/[A-Za-z0-9][^.!?。！？]{24,140}[.!?。！？]?/)?.[0] ??
+    normalized;
+
+  return sentence
+    .split(/\s+/)
+    .slice(0, 18)
+    .join(" ")
+    .slice(0, 120)
+    .trim();
+}
+
+function withPdfFragment(fileUrl: string, snippet?: string, page?: number) {
+  const params: string[] = [];
+  if (typeof page === "number" && page > 0) {
+    params.push(`page=${page}`);
+  }
+
+  const searchTerm = getPdfSearchTerm(snippet);
+  if (searchTerm) {
+    params.push(`search=${encodeURIComponent(searchTerm)}`);
+  }
+
+  return params.length > 0 ? `${fileUrl}#${params.join("&")}` : fileUrl;
+}
+
+function SourceDrawer({
+  filename,
+  content,
+  fileUrl,
+  mode,
+  snippet,
+  page,
+  onClose,
+}: {
+  filename: string;
+  content?: string;
+  fileUrl: string;
+  mode: "pdf" | "text";
+  snippet?: string;
+  page?: number;
+  onClose: () => void;
+}) {
+  const highlightRef = useRef<HTMLElement | null>(null);
+  const [pdfReloadNonce, setPdfReloadNonce] = useState(0);
+  const previewUrl = useMemo(() => {
+    return mode === "pdf" ? withPdfFragment(fileUrl, snippet, page) : fileUrl;
+  }, [fileUrl, mode, page, snippet]);
+
+  const parts = useMemo(() => {
+    const sourceContent = content ?? "";
+    if (!snippet) return [{ text: sourceContent, match: false }];
+
+    const range = findSnippetRange(sourceContent, snippet);
+    if (!range) return [{ text: sourceContent, match: false }];
+
+    return [
+      { text: sourceContent.slice(0, range.start), match: false },
+      { text: sourceContent.slice(range.start, range.end), match: true },
+      { text: sourceContent.slice(range.end), match: false },
+    ];
+  }, [content, mode, snippet]);
+
+  const scrollToHighlight = () => {
+    highlightRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    highlightRef.current?.animate(
+      [
+        { outlineColor: "rgba(245, 158, 11, 0)", outlineWidth: "0px" },
+        { outlineColor: "rgba(245, 158, 11, 0.9)", outlineWidth: "3px" },
+        { outlineColor: "rgba(245, 158, 11, 0)", outlineWidth: "0px" },
+      ],
+      { duration: 900, easing: "ease-out" },
+    );
+  };
+
+  useEffect(() => {
+    if (!parts.some((part) => part.match)) return;
+    window.setTimeout(scrollToHighlight, 120);
+  }, [parts]);
+
+  const handleSnippetClick = () => {
+    if (mode === "pdf") {
+      setPdfReloadNonce((value) => value + 1);
+      return;
+    }
+
+    scrollToHighlight();
+  };
+
+  const renderedText = (
+    <pre className="whitespace-pre-wrap break-words font-mono text-[13px] leading-7 text-foreground">
+      {parts.map((part, idx) =>
+        part.match ? (
+          <mark
+            key={idx}
+            ref={highlightRef}
+            className="rounded bg-amber-400/45 px-0.5 text-foreground ring-1 ring-amber-500/50"
+          >
+            {part.text}
+          </mark>
+        ) : (
+          <span key={idx}>{part.text}</span>
+        ),
+      )}
+    </pre>
+  );
+
+  return (
+    <div className="absolute bottom-0 right-0 top-0 z-30 flex w-screen max-w-[calc(100vw-1rem)] flex-col border-l border-border bg-background shadow-2xl sm:w-[min(78vw,1040px)] lg:max-w-[calc(100vw-260px)]">
+      <div className="flex h-14 items-center justify-between border-b border-border px-4">
+        <div className="min-w-0">
+          <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">
+            {mode === "pdf" ? "原始 PDF" : "原文"}
+          </p>
+          <h3 className="truncate text-sm font-semibold text-foreground">{filename}</h3>
+        </div>
+        <div className="flex items-center gap-1">
+          <a
+            href={previewUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+            aria-label="新窗口打开原文"
+          >
+            <ExternalLink className="h-4 w-4" />
+          </a>
+          <button
+            type="button"
+            onClick={onClose}
+            className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+            aria-label="关闭原文"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      </div>
+
+      {snippet && (
+        <div className="border-b border-amber-500/30 bg-amber-500/10 px-4 py-3 shadow-[inset_0_-1px_0_rgba(245,158,11,0.15)]">
+          <div className="mb-1 flex items-center gap-2 text-[11px] font-bold uppercase tracking-wider text-amber-700 dark:text-amber-300">
+            <Quote className="h-3.5 w-3.5" />
+            最相关片段
+            {mode === "pdf" && page && (
+              <span className="rounded bg-background/70 px-1.5 py-0.5 font-mono text-[10px] tracking-normal text-muted-foreground">
+                Page {page}
+              </span>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={handleSnippetClick}
+            className="block h-24 w-full overflow-y-auto whitespace-pre-wrap rounded-md border border-amber-500/30 bg-amber-300/45 px-2.5 py-2 text-left text-[12px] leading-5 text-foreground shadow-sm transition-colors hover:bg-amber-300/60 focus:outline-none focus:ring-2 focus:ring-amber-500/70 dark:bg-amber-400/25 dark:hover:bg-amber-400/35"
+            title={mode === "pdf" ? "点击重新加载 PDF 的页码/搜索定位" : "点击定位原文中的相关片段"}
+          >
+            {snippet}
+          </button>
+        </div>
+      )}
+
+      {mode === "pdf" ? (
+        <iframe
+          key={`${previewUrl}:${pdfReloadNonce}`}
+          title={`原始 PDF: ${filename}`}
+          src={previewUrl}
+          className="h-full min-h-0 flex-1 border-0 bg-muted"
+        />
+      ) : (
+        <div className="flex-1 overflow-y-auto px-6 py-5">
+          {renderedText}
+        </div>
+      )}
+    </div>
   );
 }
 
