@@ -1,4 +1,4 @@
-import { MessageSquareText, Plus, Trash2, Sun, Moon } from "lucide-react";
+import { LogOut, MessageSquareText, Plus, Trash2, Sun, Moon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Tooltip,
@@ -18,6 +18,8 @@ export interface ChatHeaderProps {
   onClearHistory: () => void;
   /** 点击主题切换按钮触发 */
   onToggleTheme: () => void;
+  username?: string;
+  onLogout: () => void;
 }
 
 export function ChatHeader({
@@ -25,6 +27,8 @@ export function ChatHeader({
   onNewChat,
   onClearHistory,
   onToggleTheme,
+  username,
+  onLogout,
 }: ChatHeaderProps) {
   const isDark = theme === "dark";
 
@@ -51,6 +55,9 @@ export function ChatHeader({
 
         {/* 右侧:操作按钮区 */}
         <div className="flex items-center gap-2">
+          {username && (
+            <span className="max-w-28 truncate text-xs text-muted-foreground">{username}</span>
+          )}
           {/* 新建对话 */}
           <Tooltip>
             <TooltipTrigger asChild>
@@ -106,6 +113,22 @@ export function ChatHeader({
             </TooltipTrigger>
             <TooltipContent side="bottom">
               <p>{isDark ? "切换至浅色主题" : "切换至深色主题"}</p>
+            </TooltipContent>
+          </Tooltip>
+
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={onLogout}
+                aria-label="退出登录"
+              >
+                <LogOut className="h-4 w-4" aria-hidden="true" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">
+              <p>退出登录</p>
             </TooltipContent>
           </Tooltip>
         </div>

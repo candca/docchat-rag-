@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { ChatHeader } from '@/components/chat/chat-header'
 import { ChatViewport } from '@/components/chat/chat-viewport'
@@ -6,9 +6,12 @@ import { ChatInput } from '@/components/chat/chat-input'
 import { DocumentList } from '@/components/chat/document-list'
 import { ConversationHistory } from '@/components/chat/conversation-history'
 import { CitationPanel } from '@/components/chat/citation-panel'
+import { LoginScreen } from '@/components/chat/login-screen'
 import { useAppStore } from '@/stores/appStore'
 import { useChat } from '@/hooks/useChat'
 import { useDocuments } from '@/hooks/useDocuments'
+import { getAuthToken, getCurrentUser, login, register, setAuthToken, type UserInfo } from '@/services/api'
+import { formatRequestError } from '@/lib/error'
 
 function App() {
   const {
@@ -25,7 +28,12 @@ function App() {
     deleteConversation,
     toggleDocSelected,
     toggleTheme,
+    switchUserState,
+    resetUserState,
   } = useAppStore()
+  const [user, setUser] = useState<UserInfo | null>(null)
+  const [authReady, setAuthReady] = useState(false)
+  const [authError, setAuthError] = useState<string | null>(null)
 
   const {
     messages,
@@ -36,7 +44,25 @@ function App() {
     startNewChat,
     clearMessages,
   } = useChat()
-  const { documents, error, addDocument, removeDocument } = useDocuments()
+  const { documents, error, addDocument, removeDocument, generateSummary } = useDocuments(Boolean(user))
+
+  useEffect(() => {
+    const token = getAuthToken()
+    if (!token) {
+      setAuthReady(true)
+      return
+    }
+    getCurrentUser()
+      .then((currentUser) => {
+        switchUserState(currentUser.user_id)
+        setUser(currentUser)
+      })
+      .catch(() => {
+        setAuthToken(null)
+        resetUserState()
+      })
+      .finally(() => setAuthReady(true))
+  }, [resetUserState, switchUserState])
 
   // 同步 theme 到 <html> class
   useEffect(() => {
@@ -79,6 +105,41 @@ function App() {
     [setActiveCitationIndex],
   )
 
+  const handleAuth = useCallback(
+    async (username: string, password: string, mode: 'login' | 'register') => {
+      setAuthError(null)
+      try {
+        const response = mode === 'login'
+          ? await login(username, password)
+          : await register(username, password)
+        switchUserState(response.user.user_id)
+        setUser(response.user)
+      } catch (error) {
+        setAuthError(formatRequestError(error, '登录失败，请检查用户名和密码'))
+        throw error
+      }
+    },
+    [switchUserState],
+  )
+
+  const handleLogout = useCallback(() => {
+    setAuthToken(null)
+    setUser(null)
+    resetUserState()
+  }, [resetUserState])
+
+  if (!authReady) {
+    return <div className="flex h-screen w-screen items-center justify-center bg-background text-sm text-muted-foreground">正在加载...</div>
+  }
+
+  if (!user) {
+    return (
+      <TooltipProvider>
+        <LoginScreen onLogin={handleAuth} error={authError} />
+      </TooltipProvider>
+    )
+  }
+
   return (
     <TooltipProvider>
       <div className="flex h-screen w-screen overflow-hidden bg-background text-foreground">
@@ -98,6 +159,7 @@ function App() {
             onSelect={handleSelectDocument}
             onDelete={removeDocument}
             onUpload={addDocument}
+            onGenerateSummary={generateSummary}
           />
           {/* 上传错误提示 */}
           {error && (
@@ -114,6 +176,8 @@ function App() {
             onNewChat={startNewChat}
             onClearHistory={handleClear}
             onToggleTheme={toggleTheme}
+            username={user.username}
+            onLogout={handleLogout}
           />
           <ChatViewport
             messages={messages}

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { FileText, FileType2, MoreHorizontal, Trash2, Check, AlertCircle } from "lucide-react";
+import { FileText, FileType2, MoreHorizontal, Trash2, Check, AlertCircle, ListTree, Tags, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { Document } from "@/types";
 import { DocumentUpload } from "./document-upload";
@@ -19,6 +19,8 @@ export interface DocumentListProps {
   onDelete?: (id: string) => void;
   /** 新文档上传完成 */
   onUpload?: (file: File) => void;
+  /** 为文档生成/重新生成摘要 */
+  onGenerateSummary?: (id: string) => void;
   /** 自定义外层样式 */
   className?: string;
 }
@@ -74,12 +76,14 @@ export function DocumentList({
   onSelect,
   onDelete,
   onUpload,
+  onGenerateSummary,
   className,
 }: DocumentListProps) {
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
   const selectedSet = new Set(selectedDocIds ?? []);
   const selectedCount = selectedSet.size;
   const readyCount = documents.filter((d) => d.status === "ready").length;
+  const activeDocument = documents.find((doc) => doc.id === activeDocId);
 
   return (
     <aside className={cn("flex h-full w-full flex-col bg-muted/30 border-r border-border", className)}>
@@ -255,6 +259,10 @@ export function DocumentList({
         )}
       </div>
 
+      {activeDocument && (
+        <DocumentSummaryPanel document={activeDocument} onGenerateSummary={onGenerateSummary} />
+      )}
+
       {/* 底部容量统计 */}
       {documents.length > 0 && (
         <div className="border-t border-border bg-muted/20 px-4 py-3">
@@ -267,5 +275,115 @@ export function DocumentList({
         </div>
       )}
     </aside>
+  );
+}
+
+function hasSummaryContent(summary: Document["summary"]): boolean {
+  if (!summary) return false;
+  return Boolean(
+    summary.one_sentence ||
+    summary.detailed ||
+    summary.keywords.length ||
+    summary.outline.length ||
+    summary.section_summaries.length,
+  );
+}
+
+function DocumentSummaryPanel({
+  document,
+  onGenerateSummary,
+}: {
+  document: Document;
+  onGenerateSummary?: (id: string) => void;
+}) {
+  const summary = document.summary;
+  const hasContent = hasSummaryContent(summary);
+
+  return (
+    <div className="max-h-[42%] overflow-y-auto border-t border-border bg-background/70 px-4 py-3">
+      <div className="mb-2 flex items-center justify-between">
+        <h3 className="text-[12px] font-bold uppercase tracking-wider text-muted-foreground">文档详情</h3>
+        <span className="max-w-28 truncate text-[10px] text-muted-foreground">{document.name}</span>
+      </div>
+
+      {!hasContent && (
+        <div className="rounded-md border border-dashed border-border bg-muted/20 px-3 py-3">
+          <p className="text-[12px] font-medium text-foreground">暂无摘要</p>
+          <p className="mt-1 text-[11px] leading-4 text-muted-foreground">
+            旧文档或上次生成失败时会出现这种情况，可以手动生成摘要。
+          </p>
+          {onGenerateSummary && (
+            <button
+              type="button"
+              onClick={() => onGenerateSummary(document.id)}
+              className="mt-3 inline-flex items-center gap-1.5 rounded-md bg-primary px-2.5 py-1.5 text-[11px] font-medium text-primary-foreground hover:bg-primary/90"
+            >
+              <Sparkles className="h-3 w-3" />
+              生成摘要
+            </button>
+          )}
+        </div>
+      )}
+
+      {summary?.one_sentence && (
+        <p className="rounded-md border border-border bg-muted/30 px-3 py-2 text-[12px] leading-5 text-foreground">
+          {summary.one_sentence}
+        </p>
+      )}
+
+      {summary && summary.keywords.length > 0 && (
+        <div className="mt-3">
+          <div className="mb-1.5 flex items-center gap-1.5 text-[11px] font-semibold text-muted-foreground">
+            <Tags className="h-3 w-3" />
+            关键词
+          </div>
+          <div className="flex flex-wrap gap-1">
+            {summary.keywords.map((keyword) => (
+              <span key={keyword} className="rounded bg-primary/10 px-1.5 py-0.5 text-[10px] text-primary">
+                {keyword}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {summary?.detailed && (
+        <div className="mt-3">
+          <h4 className="mb-1 text-[11px] font-semibold text-muted-foreground">详细摘要</h4>
+          <p className="text-[12px] leading-5 text-foreground/85">{summary.detailed}</p>
+        </div>
+      )}
+
+      {summary && summary.outline.length > 0 && (
+        <div className="mt-3">
+          <div className="mb-1.5 flex items-center gap-1.5 text-[11px] font-semibold text-muted-foreground">
+            <ListTree className="h-3 w-3" />
+            文档大纲
+          </div>
+          <ol className="space-y-1 text-[12px] text-foreground/85">
+            {summary.outline.map((item, idx) => (
+              <li key={`${item}-${idx}`} className="flex gap-2">
+                <span className="text-muted-foreground">{idx + 1}.</span>
+                <span>{item}</span>
+              </li>
+            ))}
+          </ol>
+        </div>
+      )}
+
+      {summary && summary.section_summaries.length > 0 && (
+        <div className="mt-3">
+          <h4 className="mb-1.5 text-[11px] font-semibold text-muted-foreground">章节摘要</h4>
+          <div className="space-y-2">
+            {summary.section_summaries.map((section, idx) => (
+              <div key={`${section.title}-${idx}`} className="rounded-md border border-border bg-card px-3 py-2">
+                <p className="text-[12px] font-semibold text-foreground">{section.title || `章节 ${idx + 1}`}</p>
+                <p className="mt-1 text-[11px] leading-5 text-muted-foreground">{section.summary}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
   );
 }

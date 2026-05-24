@@ -41,7 +41,9 @@ export class ChatWebSocket {
         return
       }
 
-      this.ws = new WebSocket(WS_URL)
+      const token = getAuthToken()
+      const url = token ? `${WS_URL}?${new URLSearchParams({ token }).toString()}` : WS_URL
+      this.ws = new WebSocket(url)
 
       this.ws.onopen = () => resolve()
 
@@ -96,3 +98,4 @@ export class ChatWebSocket {
     this.ws = null
   }
 }
+import { getAuthToken } from './api'

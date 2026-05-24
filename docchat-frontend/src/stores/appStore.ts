@@ -34,6 +34,8 @@ interface AppState {
   toggleDocSelected: (id: string) => void
   setSelectedDocIds: (ids: string[]) => void
   toggleTheme: () => void
+  switchUserState: (userId: string) => void
+  resetUserState: () => void
 }
 
 function genId(): string {
@@ -70,6 +72,58 @@ function syncActiveConversation(state: AppState, messages: Message[]) {
       activeConversation,
       ...state.conversations.filter((c) => c.id !== activeId),
     ]),
+  }
+}
+
+type UserStateSnapshot = Pick<
+  AppState,
+  'messages' | 'conversations' | 'activeConversationId' | 'selectedDocIds' | 'activeDocId'
+>
+
+let activeUserId: string | null = localStorage.getItem('docchat-active-user-id')
+
+function userStateKey(userId: string): string {
+  return `docchat-user-state:${userId}`
+}
+
+function snapshot(state: AppState): UserStateSnapshot {
+  return {
+    messages: state.messages,
+    conversations: state.conversations,
+    activeConversationId: state.activeConversationId,
+    selectedDocIds: state.selectedDocIds,
+    activeDocId: state.activeDocId,
+  }
+}
+
+function saveUserState(userId: string | null, state: AppState) {
+  if (!userId) return
+  localStorage.setItem(userStateKey(userId), JSON.stringify(snapshot(state)))
+}
+
+function loadUserState(userId: string): UserStateSnapshot {
+  const empty: UserStateSnapshot = {
+    messages: [],
+    conversations: [],
+    activeConversationId: null,
+    selectedDocIds: [],
+    activeDocId: null,
+  }
+  const raw = localStorage.getItem(userStateKey(userId))
+  if (!raw) {
+    return empty
+  }
+  try {
+    const parsed = JSON.parse(raw) as Partial<UserStateSnapshot>
+    return {
+      messages: Array.isArray(parsed.messages) ? parsed.messages : [],
+      conversations: Array.isArray(parsed.conversations) ? parsed.conversations : [],
+      activeConversationId: typeof parsed.activeConversationId === 'string' ? parsed.activeConversationId : null,
+      selectedDocIds: Array.isArray(parsed.selectedDocIds) ? parsed.selectedDocIds : [],
+      activeDocId: typeof parsed.activeDocId === 'string' ? parsed.activeDocId : null,
+    }
+  } catch {
+    return empty
   }
 }
 
@@ -188,6 +242,37 @@ export const useAppStore = create<AppState>()(
   setSelectedDocIds: (ids) => set({ selectedDocIds: ids }),
   toggleTheme: () =>
     set((s) => ({ theme: s.theme === 'dark' ? 'light' : 'dark' })),
+
+  switchUserState: (userId) =>
+    set((s) => {
+      if (activeUserId !== userId) {
+        saveUserState(activeUserId, s)
+      }
+      activeUserId = userId
+      localStorage.setItem('docchat-active-user-id', userId)
+      const loaded = loadUserState(userId)
+      return {
+        ...loaded,
+        documents: [],
+        activeCitationIndex: null,
+      }
+    }),
+
+  resetUserState: () =>
+    set((s) => {
+      saveUserState(activeUserId, s)
+      activeUserId = null
+      localStorage.removeItem('docchat-active-user-id')
+      return {
+        messages: [],
+        conversations: [],
+        activeConversationId: null,
+        documents: [],
+        activeDocId: null,
+        selectedDocIds: [],
+        activeCitationIndex: null,
+      }
+    }),
     }),
     {
       name: 'docchat-app-state',

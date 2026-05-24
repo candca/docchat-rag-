@@ -12,6 +12,7 @@ from fastapi import WebSocket
 from helpers.log import get_logger
 from helpers.prettier import prettify_source
 from schemas.chat import ChatRequest
+from auth import User
 
 from api.deps import ChatHistoryDep, LamaCppClientDep, VectorDatabaseDep
 
@@ -98,6 +99,7 @@ async def stream_rag_response(
     query: ChatRequest,
     chat_history: ChatHistoryDep,
     index: VectorDatabaseDep,
+    current_user: User,
 ):
     """
     Helper function to stream RAG responses token by token.
@@ -120,24 +122,28 @@ async def stream_rag_response(
         )
 
         # 若前端勾选了文档，则用 document_id 过滤检索范围（None / 空列表 = 查全库）
-        retrieval_filter: dict | None = None
+        retrieval_filter: dict | None = {"user_id": current_user.user_id}
         if query.document_ids:
             ids = list(query.document_ids)
             retrieval_filter = (
-                {"document_id": ids[0]} if len(ids) == 1 else {"document_id": {"$in": ids}}
+                {"$and": [{"user_id": current_user.user_id}, {"document_id": ids[0]}]}
+                if len(ids) == 1
+                else {"$and": [{"user_id": current_user.user_id}, {"document_id": {"$in": ids}}]}
             )
 
         retrieved_contents, sources = index.similarity_search_with_threshold(
             query=refined_user_input,
             k=settings.NUM_RETRIEVALS,
             filter=retrieval_filter,
-            threshold=None if retrieval_filter else 0.2,
+            threshold=None,
         )
 
         if retrieval_filter and query.document_ids and is_overview_query(query.text):
             pinned_chunks = []
             for document_id in query.document_ids:
-                pinned_chunks.extend(index.get_chunks_by_document_id(document_id, limit=3))
+                pinned_chunks.extend(
+                    index.get_chunks_by_document_id(document_id, limit=3, user_id=current_user.user_id)
+                )
 
             seen = {chunk.page_content for chunk in retrieved_contents}
             for chunk in pinned_chunks:

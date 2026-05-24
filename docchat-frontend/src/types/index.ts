@@ -33,6 +33,14 @@ export interface Conversation {
   updatedAt: number;
 }
 
+export interface DocumentSummary {
+  one_sentence: string;
+  detailed: string;
+  section_summaries: Array<{ title: string; summary: string }>;
+  keywords: string[];
+  outline: string[];
+}
+
 /** 左栏文档列表中的一项 */
 export interface Document {
   /** 对应后端 document_id */
@@ -47,4 +55,6 @@ export interface Document {
   uploadedAt: number;
   /** 文件大小(bytes),可选 */
   size?: number;
+  /** 上传后自动生成的文档摘要 */
+  summary?: DocumentSummary | null;
 }

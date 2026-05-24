@@ -1,7 +1,11 @@
 from core.config import settings
 from helpers.log import get_logger
 from sqlalchemy import Engine, event, text
-from sqlmodel import create_engine
+from sqlmodel import SQLModel, create_engine
+
+# Register SQLModel table classes before create_all.
+from auth import User  # noqa: F401
+from bot.memory.document_registry import DocumentRecord  # noqa: F401
 
 logger = get_logger(__name__)
 
@@ -40,6 +44,17 @@ def create_db_engine(verbose: bool = False, **kwargs):
         cursor.close()
 
     return engine
+
+
+def ensure_database_schema(engine: Engine) -> None:
+    SQLModel.metadata.create_all(engine)
+    with engine.begin() as conn:
+        columns = {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(documents)").fetchall()}
+        if "user_id" not in columns:
+            conn.exec_driver_sql("ALTER TABLE documents ADD COLUMN user_id VARCHAR NOT NULL DEFAULT 'legacy'")
+        if "summary_json" not in columns:
+            conn.exec_driver_sql("ALTER TABLE documents ADD COLUMN summary_json VARCHAR NOT NULL DEFAULT '{}'")
+        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_documents_user_id ON documents (user_id)")
 
 
 def check_health(engine: Engine) -> None:

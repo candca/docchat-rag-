@@ -4,7 +4,7 @@ import state
 import uvicorn
 from api.routes import api_router
 from core.config import settings
-from database import create_db_engine
+from database import create_db_engine, ensure_database_schema
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from helpers.log import get_logger
@@ -18,6 +18,7 @@ logger = get_logger(__name__)
 async def lifespan(app: FastAPI):
     # Initialize global state
     state.engine = create_db_engine()
+    ensure_database_schema(state.engine)
     state.llm_client = create_llm_client(settings.MODEL_FOLDER)
     state.index = init_index(settings.VECTOR_STORE_PATH)
 

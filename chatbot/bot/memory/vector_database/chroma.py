@@ -341,12 +341,15 @@ class Chroma:
             logger.error("Error deleting chunks for document_id=%s: %s", document_id, e)
             raise
 
-    def get_chunks_by_document_id(self, document_id: str, limit: int = 3) -> list[Document]:
+    def get_chunks_by_document_id(self, document_id: str, limit: int = 3, user_id: str | None = None) -> list[Document]:
         """
         Return the first stored chunks for a document, ordered by chunk_index when available.
         """
+        where = {"document_id": document_id}
+        if user_id is not None:
+            where = {"$and": [{"document_id": document_id}, {"user_id": user_id}]}
         results = self.collection.get(
-            where={"document_id": document_id},
+            where=where,
             include=["documents", "metadatas"],
         )
         documents = results.get("documents") or []

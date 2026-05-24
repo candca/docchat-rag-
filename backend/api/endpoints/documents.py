@@ -4,6 +4,7 @@ from typing import Annotated
 from bot.memory.document_registry import DocumentRegistry
 from bot.memory.vector_database.id_generator import generate_id
 from core.config import settings
+from document_summary import generate_document_summary, normalize_document_summary
 from document_loader.loader import DirectoryLoader, load_file_text
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
@@ -11,16 +12,16 @@ from helpers.log import get_logger
 from memory_builder import split_chunks
 from schemas.documents import DocumentContentResponse, DocumentInfo, DocumentListResponse, DocumentUploadResponse
 
-from api.deps import SessionDep, VectorDatabaseDep
+from api.deps import CurrentUserDep, LamaCppClientDep, SessionDep, VectorDatabaseDep
 
 logger = get_logger(__name__)
 
 router = APIRouter()
 
 
-def get_document_record_by_filename(session: SessionDep, filename: str):
+def get_document_record_by_filename(session: SessionDep, filename: str, user_id: str):
     registry = DocumentRegistry(session)
-    record = registry.get_by_filename(filename)
+    record = registry.get_by_filename(filename, user_id=user_id)
     if record is None:
         raise HTTPException(status_code=404, detail=f"Document '{filename}' not found.")
     return record
@@ -46,6 +47,8 @@ async def upload_document(
     file: Annotated[UploadFile, File(...)],
     index: VectorDatabaseDep,
     session: SessionDep,
+    current_user: CurrentUserDep,
+    llm_client: LamaCppClientDep,
 ):
     """
     Upload a document to the knowledge base.
@@ -71,17 +74,17 @@ async def upload_document(
         )
 
     registry = DocumentRegistry(session)
-    existing = registry.get_by_filename(file.filename or "")
+    existing = registry.get_by_filename(file.filename or "", user_id=current_user.user_id)
     if existing is not None:
         raise HTTPException(
             status_code=409,
             detail=f"Document '{file.filename}' already exists.",
         )
 
-    dest_dir = settings.DOCS_PATH
+    dest_dir = settings.DOCS_PATH / current_user.user_id
     dest_dir.mkdir(parents=True, exist_ok=True)
     file_path = dest_dir / file.filename
-    document_id = generate_id(str(file_path))
+    document_id = generate_id(f"{current_user.user_id}:{file_path}")
 
     content = await file.read()
     file_path.write_bytes(content)
@@ -133,6 +136,7 @@ async def upload_document(
         {
             "source": str(file_path),
             "document_id": document_id,
+            "user_id": current_user.user_id,
             "filename": file.filename,
             "content_type": file.content_type,
             "size": len(content),
@@ -146,6 +150,7 @@ async def upload_document(
     # Inject document_id + version_hash into every chunk's metadata
     for idx, chunk in enumerate(chunks):
         chunk.metadata["document_id"] = document_id
+        chunk.metadata["user_id"] = current_user.user_id
         chunk.metadata["version_hash"] = version_hash
         chunk.metadata["chunk_index"] = idx
 
@@ -154,24 +159,35 @@ async def upload_document(
     logger.info("Adding document chunks to the vector database index...")
 
     chunk_ids = index.from_chunks(chunks)
+    try:
+        summary = await generate_document_summary(llm_client, page_content)
+    except Exception as exc:
+        logger.warning("Failed to generate summary for '%s': %s", file.filename, exc)
+        summary = normalize_document_summary(None)
 
     registry.upsert(
         document_id,
+        user_id=current_user.user_id,
         source=str(file_path),
         filename=file.filename or document_id,
         size=len(content),
         content_type=file.content_type or "application/octet-stream",
         version_hash=version_hash,
+        summary=summary,
         chunk_ids=chunk_ids,
     )
 
     logger.info("Memory Index has been updated successfully!")
 
-    return DocumentUploadResponse(document_id=document_id, filename=file.filename or document_id)
+    return DocumentUploadResponse(
+        document_id=document_id,
+        filename=file.filename or document_id,
+        summary=summary,
+    )
 
 
 @router.get("/documents", response_model=DocumentListResponse)
-async def list_documents(session: SessionDep):
+async def list_documents(session: SessionDep, current_user: CurrentUserDep):
     """
     List all uploaded documents.
 
@@ -187,21 +203,26 @@ async def list_documents(session: SessionDep):
             size=record.size,
             content_type=record.content_type or "application/octet-stream",
             version_hash=record.version_hash,
+            summary=record.summary,
         )
-        for record in registry.get_all()
+        for record in registry.get_all(user_id=current_user.user_id)
     ]
     return DocumentListResponse(documents=documents)
 
 
 @router.get("/documents/content", response_model=DocumentContentResponse)
-async def get_document_content(session: SessionDep, filename: str = Query(..., min_length=1)):
+async def get_document_content(
+    session: SessionDep,
+    current_user: CurrentUserDep,
+    filename: str = Query(..., min_length=1),
+):
     """
     Return the stored source text for a document by filename.
 
     The filename is resolved through the document registry instead of trusting
     a client-provided path, so callers cannot read arbitrary files.
     """
-    record = get_document_record_by_filename(session, filename)
+    record = get_document_record_by_filename(session, filename, current_user.user_id)
     file_path = get_source_file_path(record)
 
     if file_path.suffix.lower() == ".pdf":
@@ -219,12 +240,60 @@ async def get_document_content(session: SessionDep, filename: str = Query(..., m
     )
 
 
+@router.post("/documents/{document_id}/summary", response_model=DocumentInfo)
+async def generate_summary_for_document(
+    document_id: str,
+    session: SessionDep,
+    current_user: CurrentUserDep,
+    llm_client: LamaCppClientDep,
+):
+    registry = DocumentRegistry(session)
+    record = registry.get(document_id, user_id=current_user.user_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail=f"Document '{document_id}' not found.")
+
+    file_path = get_source_file_path(record)
+    if file_path.suffix.lower() == ".pdf":
+        content = load_file_text(file_path)
+    else:
+        try:
+            content = file_path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            content = file_path.read_text(encoding="utf-8", errors="replace")
+
+    summary = await generate_document_summary(llm_client, content)
+    registry.upsert(
+        record.document_id,
+        user_id=record.user_id,
+        source=record.source,
+        filename=record.filename,
+        size=record.size,
+        content_type=record.content_type,
+        version_hash=record.version_hash,
+        summary=summary,
+        chunk_ids=record.chunk_ids,
+    )
+
+    return DocumentInfo(
+        document_id=record.document_id,
+        filename=record.filename,
+        size=record.size,
+        content_type=record.content_type or "application/octet-stream",
+        version_hash=record.version_hash,
+        summary=summary,
+    )
+
+
 @router.get("/documents/file")
-async def get_document_file(session: SessionDep, filename: str = Query(..., min_length=1)):
+async def get_document_file(
+    session: SessionDep,
+    current_user: CurrentUserDep,
+    filename: str = Query(..., min_length=1),
+):
     """
     Return the original stored document as an inline file preview.
     """
-    record = get_document_record_by_filename(session, filename)
+    record = get_document_record_by_filename(session, filename, current_user.user_id)
     file_path = get_source_file_path(record)
     media_type = record.content_type or "application/octet-stream"
     if file_path.suffix.lower() == ".pdf":
@@ -245,7 +314,12 @@ async def get_document_file(session: SessionDep, filename: str = Query(..., min_
     status_code=204,
     responses={404: {"description": "Not Found - Document with the given ID does not exist."}},
 )
-async def delete_document(document_id: str, index: VectorDatabaseDep, session: SessionDep):
+async def delete_document(
+    document_id: str,
+    index: VectorDatabaseDep,
+    session: SessionDep,
+    current_user: CurrentUserDep,
+):
     """
     Delete the uploaded document from the knowledge base.
 
@@ -261,7 +335,7 @@ async def delete_document(document_id: str, index: VectorDatabaseDep, session: S
         HTTPException: 404 if the document with the given ID is not found.
     """
     registry = DocumentRegistry(session)
-    entry = registry.get(document_id)
+    entry = registry.get(document_id, user_id=current_user.user_id)
 
     if entry is None:
         raise HTTPException(status_code=404, detail=f"Document '{document_id}' not found.")
@@ -269,6 +343,6 @@ async def delete_document(document_id: str, index: VectorDatabaseDep, session: S
     index.delete_chunks_by_document_id(document_id, chunk_ids=entry.chunk_ids or None)
     registry.remove(document_id)
 
-    file_path = settings.DOCS_PATH / entry.filename
+    file_path = Path(entry.source) if entry.source else settings.DOCS_PATH / current_user.user_id / entry.filename
     if file_path.exists():
         file_path.unlink()

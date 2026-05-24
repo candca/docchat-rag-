@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useAppStore } from '@/stores/appStore'
 import type { Document } from '@/types'
-import { listDocuments, uploadDocument, deleteDocument } from '@/services/api'
+import { listDocuments, uploadDocument, deleteDocument, generateDocumentSummary } from '@/services/api'
+import { formatRequestError } from '@/lib/error'
 
 export interface UploadProgress {
   filename: string
@@ -15,7 +16,7 @@ function extOfFilename(filename: string): Document['type'] {
   return 'md'
 }
 
-export function useDocuments() {
+export function useDocuments(enabled = true) {
   const { documents, removeDocument } = useAppStore()
 
   const [uploading, setUploading] = useState<UploadProgress | null>(null)
@@ -42,6 +43,7 @@ export function useDocuments() {
           status: 'ready' as const,
           uploadedAt: Date.now(),
           size: info.size,
+          summary: info.summary ?? null,
         })),
       )
       // 拉成功就清掉上一次的"加载文档列表失败"
@@ -59,6 +61,7 @@ export function useDocuments() {
     let timer: ReturnType<typeof setTimeout> | null = null
 
     const attempt = async (delay: number) => {
+      if (!enabled) return
       if (cancelled) return
       const ok = await fetchDocuments()
       if (ok || cancelled) return
@@ -66,13 +69,13 @@ export function useDocuments() {
       timer = setTimeout(() => void attempt(next), delay)
     }
 
-    void attempt(500)
+    if (enabled) void attempt(500)
 
     return () => {
       cancelled = true
       if (timer) clearTimeout(timer)
     }
-  }, [fetchDocuments])
+  }, [enabled, fetchDocuments])
 
   const handleUpload = useCallback(
     async (file: File) => {
@@ -87,11 +90,11 @@ export function useDocuments() {
         setActiveDocId(uploaded.document_id)
         setSelectedDocIds([uploaded.document_id])
       } catch (err: unknown) {
-        const axiosErr = err as { response?: { status?: number; data?: { detail?: string } } }
+        const axiosErr = err as { response?: { status?: number } }
         const msg =
           axiosErr.response?.status === 409
             ? `"${file.name}" 已存在，请勿重复上传`
-            : axiosErr.response?.data?.detail ?? '上传失败，请重试'
+            : formatRequestError(err, '上传失败，请重试')
         if (mountedRef.current) setError(msg)
         // 让调用方（DocumentUpload）也能感知失败，刷新它的本地 UI
         throw new Error(msg)
@@ -115,11 +118,23 @@ export function useDocuments() {
     [removeDocument],
   )
 
+  const handleGenerateSummary = useCallback(async (id: string) => {
+    setError(null)
+    try {
+      const info = await generateDocumentSummary(id)
+      const { updateDocument } = useAppStore.getState()
+      updateDocument(id, { summary: info.summary ?? null })
+    } catch (err) {
+      if (mountedRef.current) setError(formatRequestError(err, '摘要生成失败，请重试'))
+    }
+  }, [])
+
   return {
     documents,
     uploading,
     error,
     addDocument: handleUpload,
     removeDocument: handleRemove,
+    generateSummary: handleGenerateSummary,
   }
 }

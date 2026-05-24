@@ -34,6 +34,7 @@ class Settings(BaseSettings):
     DOCS_PATH: Path = ROOT_PATH / Path("docs")
 
     DATABASE_URL: str = f"sqlite:///{ROOT_PATH / 'vector_store' / 'registry.db'}"
+    AUTH_SECRET_KEY: str = "change-me-docchat-local-secret"
 
     # DeepSeek API (set this to use API mode instead of local llama.cpp)
     DEEPSEEK_API_KEY: str = ""
