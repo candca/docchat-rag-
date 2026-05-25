@@ -10,6 +10,7 @@ import { LoginScreen } from '@/components/chat/login-screen'
 import { useAppStore } from '@/stores/appStore'
 import { useChat } from '@/hooks/useChat'
 import { useDocuments } from '@/hooks/useDocuments'
+import { useKnowledgeBases } from '@/hooks/useKnowledgeBases'
 import { getAuthToken, getCurrentUser, login, register, setAuthToken, type UserInfo } from '@/services/api'
 import { formatRequestError } from '@/lib/error'
 
@@ -44,7 +45,26 @@ function App() {
     startNewChat,
     clearMessages,
   } = useChat()
-  const { documents, error, addDocument, removeDocument, generateSummary } = useDocuments(Boolean(user))
+  const {
+    knowledgeBases,
+    activeKnowledgeBaseId,
+    error: knowledgeBaseError,
+    setActiveKnowledgeBaseId,
+    addKnowledgeBase,
+    updateKnowledgeBaseName,
+    removeKnowledgeBase,
+    rebuildKnowledgeBase,
+    refreshKnowledgeBases,
+  } = useKnowledgeBases(Boolean(user))
+  const {
+    documents,
+    error,
+    summarizingId,
+    addDocument,
+    removeDocument,
+    generateSummary,
+    rebuildIndex,
+  } = useDocuments(Boolean(user) && Boolean(activeKnowledgeBaseId), activeKnowledgeBaseId, refreshKnowledgeBases)
 
   useEffect(() => {
     const token = getAuthToken()
@@ -144,7 +164,7 @@ function App() {
     <TooltipProvider>
       <div className="flex h-screen w-screen overflow-hidden bg-background text-foreground">
         {/* 左栏：文档列表 (260px) */}
-        <div className="w-[260px] shrink-0 overflow-hidden flex flex-col">
+        <div className="w-[380px] shrink-0 overflow-hidden flex flex-col">
           <ConversationHistory
             conversations={conversations}
             activeConversationId={activeConversationId}
@@ -153,18 +173,27 @@ function App() {
           />
           <DocumentList
             documents={documents}
+            knowledgeBases={knowledgeBases}
+            activeKnowledgeBaseId={activeKnowledgeBaseId}
             activeDocId={activeDocId}
             selectedDocIds={selectedDocIds}
             onToggleSelected={toggleDocSelected}
             onSelect={handleSelectDocument}
             onDelete={removeDocument}
+            onRebuildDocument={rebuildIndex}
+            onCreateKnowledgeBase={addKnowledgeBase}
+            onRenameKnowledgeBase={updateKnowledgeBaseName}
+            onDeleteKnowledgeBase={removeKnowledgeBase}
+            onRebuildKnowledgeBase={rebuildKnowledgeBase}
+            onSelectKnowledgeBase={setActiveKnowledgeBaseId}
             onUpload={addDocument}
             onGenerateSummary={generateSummary}
+            summarizingDocId={summarizingId}
           />
           {/* 上传错误提示 */}
-          {error && (
+          {(error || knowledgeBaseError) && (
             <div className="mx-3 mb-3 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-[12px] text-destructive">
-              {error}
+              {error || knowledgeBaseError}
             </div>
           )}
         </div>

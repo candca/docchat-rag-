@@ -211,6 +211,7 @@ export const useAppStore = create<AppState>()(
       return {
         documents: docs,
         selectedDocIds: s.selectedDocIds.filter((id) => validIds.has(id)),
+        activeDocId: s.activeDocId && validIds.has(s.activeDocId) ? s.activeDocId : null,
       }
     }),
 

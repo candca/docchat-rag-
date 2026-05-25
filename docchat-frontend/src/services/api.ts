@@ -51,15 +51,19 @@ export async function getCurrentUser(): Promise<UserInfo> {
 
 export interface DocumentInfo {
   document_id: string
+  knowledge_base_id: string
   filename: string
   size: number
   content_type: string
+  parse_status: 'ready' | 'indexing' | 'error'
   summary?: DocumentSummary | null
 }
 
 interface DocumentUploadResponse {
   document_id: string
+  knowledge_base_id: string
   filename: string
+  parse_status: 'ready' | 'indexing' | 'error'
   summary?: DocumentSummary | null
 }
 
@@ -79,10 +83,48 @@ export interface DocumentSummary {
   section_summaries: Array<{ title: string; summary: string }>
   keywords: string[]
   outline: string[]
+  summary_origin?: string
+}
+
+export interface KnowledgeBaseInfo {
+  knowledge_base_id: string
+  name: string
+  created_at: string
+  updated_at: string
+  document_count: number
+}
+
+interface KnowledgeBaseListResponse {
+  knowledge_bases: KnowledgeBaseInfo[]
+}
+
+export async function listKnowledgeBases(): Promise<KnowledgeBaseListResponse> {
+  const response = await api.get<KnowledgeBaseListResponse>('/knowledge-bases')
+  return response.data
+}
+
+export async function createKnowledgeBase(name: string): Promise<KnowledgeBaseInfo> {
+  const response = await api.post<KnowledgeBaseInfo>('/knowledge-bases', { name })
+  return response.data
+}
+
+export async function renameKnowledgeBase(id: string, name: string): Promise<KnowledgeBaseInfo> {
+  const response = await api.patch<KnowledgeBaseInfo>(`/knowledge-bases/${id}`, { name })
+  return response.data
+}
+
+export async function deleteKnowledgeBase(id: string): Promise<void> {
+  await api.delete(`/knowledge-bases/${id}`)
+}
+
+export async function rebuildKnowledgeBaseIndex(id: string): Promise<DocumentListResponse> {
+  const response = await api.post<DocumentListResponse>(`/knowledge-bases/${id}/rebuild-index`)
+  return response.data
 }
 
 export async function uploadDocument(
   file: File,
+  knowledgeBaseId?: string | null,
   onProgress?: (pct: number) => void,
 ): Promise<DocumentUploadResponse> {
   const formData = new FormData()
@@ -91,6 +133,7 @@ export async function uploadDocument(
     '/documents',
     formData,
     {
+      params: knowledgeBaseId ? { knowledge_base_id: knowledgeBaseId } : undefined,
       headers: { 'Content-Type': 'multipart/form-data' },
       onUploadProgress: (event) => {
         if (onProgress && event.total) {
@@ -102,8 +145,10 @@ export async function uploadDocument(
   return response.data
 }
 
-export async function listDocuments(): Promise<DocumentListResponse> {
-  const response = await api.get<DocumentListResponse>('/documents')
+export async function listDocuments(knowledgeBaseId?: string | null): Promise<DocumentListResponse> {
+  const response = await api.get<DocumentListResponse>('/documents', {
+    params: knowledgeBaseId ? { knowledge_base_id: knowledgeBaseId } : undefined,
+  })
   return response.data
 }
 
@@ -113,6 +158,11 @@ export async function deleteDocument(documentId: string): Promise<void> {
 
 export async function generateDocumentSummary(documentId: string): Promise<DocumentInfo> {
   const response = await api.post<DocumentInfo>(`/documents/${documentId}/summary`)
+  return response.data
+}
+
+export async function rebuildDocumentIndex(documentId: string): Promise<DocumentInfo> {
+  const response = await api.post<DocumentInfo>(`/documents/${documentId}/rebuild-index`)
   return response.data
 }
 
@@ -128,6 +178,13 @@ export function getDocumentFileUrl(filename: string): string {
   const token = getAuthToken()
   if (token) params.set('token', token)
   return `${API_BASE}/documents/file?${params.toString()}`
+}
+
+export function getDocumentFileUrlById(documentId: string): string {
+  const params = new URLSearchParams()
+  const token = getAuthToken()
+  if (token) params.set('token', token)
+  return `${API_BASE}/documents/${documentId}/file?${params.toString()}`
 }
 
 export async function resetChatHistory(): Promise<void> {

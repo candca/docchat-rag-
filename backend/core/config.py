@@ -24,9 +24,11 @@ class Settings(BaseSettings):
     CORS_ORIGINS: list[str] = [
         "http://localhost:5173",
         "http://localhost:5174",
+        "http://localhost:5175",
         "http://localhost:3000",
         "http://127.0.0.1:5173",
         "http://127.0.0.1:5174",
+        "http://127.0.0.1:5175",
     ]
 
     MODEL_FOLDER: Path = ROOT_PATH / "models"
@@ -48,11 +50,14 @@ class Settings(BaseSettings):
     EMBEDDING_MODEL: str = "all-MiniLM-L6-v2"
     SYNTHESIS_STRATEGY: str = "tree-summarization"
     NUM_RETRIEVALS: int = 4
+    INITIAL_RETRIEVAL_K: int = 20
+    RERANK_TOP_K: int = 5
+    KEYWORD_CANDIDATE_LIMIT: int = 1000
     CHUNK_SIZE: int = 1000
     CHUNK_OVERLAP: int = 50
 
     # Chat History Configuration
-    CHAT_HISTORY_LENGTH: int = 2
+    CHAT_HISTORY_LENGTH: int = 4
 
     # WebSocket Configuration
     WEBSOCKET_MAX_SIZE: int = 10 * 1024 * 1024  # 10 MB

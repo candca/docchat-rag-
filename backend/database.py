@@ -6,6 +6,7 @@ from sqlmodel import SQLModel, create_engine
 # Register SQLModel table classes before create_all.
 from auth import User  # noqa: F401
 from bot.memory.document_registry import DocumentRecord  # noqa: F401
+from knowledge_base import KnowledgeBase  # noqa: F401
 
 logger = get_logger(__name__)
 
@@ -54,7 +55,12 @@ def ensure_database_schema(engine: Engine) -> None:
             conn.exec_driver_sql("ALTER TABLE documents ADD COLUMN user_id VARCHAR NOT NULL DEFAULT 'legacy'")
         if "summary_json" not in columns:
             conn.exec_driver_sql("ALTER TABLE documents ADD COLUMN summary_json VARCHAR NOT NULL DEFAULT '{}'")
+        if "knowledge_base_id" not in columns:
+            conn.exec_driver_sql("ALTER TABLE documents ADD COLUMN knowledge_base_id VARCHAR NOT NULL DEFAULT 'default'")
+        if "parse_status" not in columns:
+            conn.exec_driver_sql("ALTER TABLE documents ADD COLUMN parse_status VARCHAR NOT NULL DEFAULT 'ready'")
         conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_documents_user_id ON documents (user_id)")
+        conn.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_documents_knowledge_base_id ON documents (knowledge_base_id)")
 
 
 def check_health(engine: Engine) -> None:

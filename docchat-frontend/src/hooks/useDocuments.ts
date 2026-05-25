@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useAppStore } from '@/stores/appStore'
 import type { Document } from '@/types'
-import { listDocuments, uploadDocument, deleteDocument, generateDocumentSummary } from '@/services/api'
+import { listDocuments, uploadDocument, deleteDocument, generateDocumentSummary, rebuildDocumentIndex } from '@/services/api'
 import { formatRequestError } from '@/lib/error'
 
 export interface UploadProgress {
@@ -16,11 +16,12 @@ function extOfFilename(filename: string): Document['type'] {
   return 'md'
 }
 
-export function useDocuments(enabled = true) {
+export function useDocuments(enabled = true, knowledgeBaseId?: string | null, onChanged?: () => void) {
   const { documents, removeDocument } = useAppStore()
 
   const [uploading, setUploading] = useState<UploadProgress | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [summarizingId, setSummarizingId] = useState<string | null>(null)
 
   // 防止组件卸载后仍执行 setState
   const mountedRef = useRef(true)
@@ -31,16 +32,17 @@ export function useDocuments(enabled = true) {
 
   const fetchDocuments = useCallback(async (): Promise<boolean> => {
     try {
-      const data = await listDocuments()
+      const data = await listDocuments(knowledgeBaseId)
       if (!mountedRef.current) return true
       // 用后端返回覆盖 store，整体替换
       const { setDocuments } = useAppStore.getState()
       setDocuments(
         data.documents.map((info) => ({
           id: info.document_id,
+          knowledgeBaseId: info.knowledge_base_id,
           name: info.filename,
           type: extOfFilename(info.filename),
-          status: 'ready' as const,
+          status: info.parse_status ?? 'ready',
           uploadedAt: Date.now(),
           size: info.size,
           summary: info.summary ?? null,
@@ -53,7 +55,7 @@ export function useDocuments(enabled = true) {
       if (mountedRef.current) setError('加载文档列表失败')
       return false
     }
-  }, [])
+  }, [knowledgeBaseId])
 
   // 启动时拉一次；若后端尚未就绪（lifespan 还在加载模型），按指数退避自动重试。
   useEffect(() => {
@@ -82,10 +84,11 @@ export function useDocuments(enabled = true) {
       setError(null)
       setUploading({ filename: file.name, progress: 0 })
       try {
-        const uploaded = await uploadDocument(file, (pct) => {
+        const uploaded = await uploadDocument(file, knowledgeBaseId, (pct) => {
           if (mountedRef.current) setUploading({ filename: file.name, progress: pct })
         })
         await fetchDocuments()
+        onChanged?.()
         const { setActiveDocId, setSelectedDocIds } = useAppStore.getState()
         setActiveDocId(uploaded.document_id)
         setSelectedDocIds([uploaded.document_id])
@@ -102,7 +105,7 @@ export function useDocuments(enabled = true) {
         if (mountedRef.current) setUploading(null)
       }
     },
-    [fetchDocuments],
+    [fetchDocuments, knowledgeBaseId, onChanged],
   )
 
   const handleRemove = useCallback(
@@ -111,21 +114,41 @@ export function useDocuments(enabled = true) {
       try {
         await deleteDocument(id)
         removeDocument(id)
+        onChanged?.()
       } catch {
         if (mountedRef.current) setError('删除失败，请重试')
       }
     },
-    [removeDocument],
+    [removeDocument, onChanged],
   )
 
   const handleGenerateSummary = useCallback(async (id: string) => {
     setError(null)
+    setSummarizingId(id)
     try {
       const info = await generateDocumentSummary(id)
       const { updateDocument } = useAppStore.getState()
       updateDocument(id, { summary: info.summary ?? null })
     } catch (err) {
       if (mountedRef.current) setError(formatRequestError(err, '摘要生成失败，请重试'))
+    } finally {
+      if (mountedRef.current) setSummarizingId(null)
+    }
+  }, [])
+
+  const handleRebuildIndex = useCallback(async (id: string) => {
+    setError(null)
+    const { updateDocument } = useAppStore.getState()
+    updateDocument(id, { status: 'indexing' })
+    try {
+      const info = await rebuildDocumentIndex(id)
+      updateDocument(id, {
+        status: info.parse_status ?? 'ready',
+        summary: info.summary ?? null,
+      })
+    } catch (err) {
+      updateDocument(id, { status: 'error' })
+      if (mountedRef.current) setError(formatRequestError(err, '重建索引失败，请重试'))
     }
   }, [])
 
@@ -133,8 +156,11 @@ export function useDocuments(enabled = true) {
     documents,
     uploading,
     error,
+    summarizingId,
     addDocument: handleUpload,
     removeDocument: handleRemove,
     generateSummary: handleGenerateSummary,
+    rebuildIndex: handleRebuildIndex,
+    refreshDocuments: fetchDocuments,
   }
 }

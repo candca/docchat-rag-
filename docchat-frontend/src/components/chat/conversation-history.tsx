@@ -26,7 +26,7 @@ export function ConversationHistory({
   onDelete,
 }: ConversationHistoryProps) {
   return (
-    <section className="flex min-h-[170px] max-h-[34vh] flex-col border-b border-border bg-muted/30">
+    <section className="flex min-h-[132px] max-h-[24vh] flex-col border-b border-border bg-muted/30">
       <div className="flex items-baseline justify-between px-4 pb-2 pt-4">
         <h2 className="text-[12px] font-bold uppercase tracking-wider text-muted-foreground">
           历史对话

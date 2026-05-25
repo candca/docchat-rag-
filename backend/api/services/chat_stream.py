@@ -11,6 +11,7 @@ from core.config import settings
 from fastapi import WebSocket
 from helpers.log import get_logger
 from helpers.prettier import prettify_source
+from retrieval import hybrid_search_with_rerank
 from schemas.chat import ChatRequest
 from auth import User
 
@@ -131,11 +132,13 @@ async def stream_rag_response(
                 else {"$and": [{"user_id": current_user.user_id}, {"document_id": {"$in": ids}}]}
             )
 
-        retrieved_contents, sources = index.similarity_search_with_threshold(
+        retrieved_contents, sources = hybrid_search_with_rerank(
+            index=index,
             query=refined_user_input,
-            k=settings.NUM_RETRIEVALS,
-            filter=retrieval_filter,
-            threshold=None,
+            where=retrieval_filter,
+            initial_k=settings.INITIAL_RETRIEVAL_K,
+            top_k=settings.RERANK_TOP_K,
+            keyword_candidate_limit=settings.KEYWORD_CANDIDATE_LIMIT,
         )
 
         if retrieval_filter and query.document_ids and is_overview_query(query.text):
@@ -152,6 +155,8 @@ async def stream_rag_response(
                 retrieved_contents.insert(0, chunk)
                 sources.insert(0, source_from_chunk(chunk))
                 seen.add(chunk.page_content)
+            retrieved_contents = retrieved_contents[: settings.RERANK_TOP_K]
+            sources = sources[: settings.RERANK_TOP_K]
 
         if retrieved_contents:
             retrieval_response += "Here are the retrieved text chunks with a content preview: \n\n"

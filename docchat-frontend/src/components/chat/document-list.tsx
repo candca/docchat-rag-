@@ -1,12 +1,31 @@
 import { useState } from "react";
-import { FileText, FileType2, MoreHorizontal, Trash2, Check, AlertCircle, ListTree, Tags, Sparkles } from "lucide-react";
+import {
+  AlertCircle,
+  Check,
+  Database,
+  Edit3,
+  Eye,
+  FileText,
+  FileType2,
+  ListTree,
+  MoreHorizontal,
+  Plus,
+  RefreshCw,
+  Sparkles,
+  Tags,
+  Trash2,
+  X,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { Document } from "@/types";
+import type { Document, KnowledgeBase } from "@/types";
 import { DocumentUpload } from "./document-upload";
+import { getDocumentFileUrlById } from "@/services/api";
 
 export interface DocumentListProps {
   /** 当前文档列表 */
   documents: Document[];
+  knowledgeBases?: KnowledgeBase[];
+  activeKnowledgeBaseId?: string | null;
   /** 当前选中(active)的文档 id */
   activeDocId?: string | null;
   /** 已勾选用于本轮检索的文档 id 列表（多选） */
@@ -17,10 +36,18 @@ export interface DocumentListProps {
   onSelect?: (id: string) => void;
   /** 删除文档回调 */
   onDelete?: (id: string) => void;
+  onViewOriginal?: (id: string) => void;
+  onRebuildDocument?: (id: string) => void;
+  onCreateKnowledgeBase?: (name: string) => void;
+  onRenameKnowledgeBase?: (id: string, name: string) => void;
+  onDeleteKnowledgeBase?: (id: string) => void;
+  onRebuildKnowledgeBase?: (id: string) => void;
+  onSelectKnowledgeBase?: (id: string) => void;
   /** 新文档上传完成 */
   onUpload?: (file: File) => void;
   /** 为文档生成/重新生成摘要 */
   onGenerateSummary?: (id: string) => void;
+  summarizingDocId?: string | null;
   /** 自定义外层样式 */
   className?: string;
 }
@@ -70,16 +97,30 @@ function getTypeStyles(type: Document["type"]) {
 
 export function DocumentList({
   documents = [],
+  knowledgeBases = [],
+  activeKnowledgeBaseId,
   activeDocId,
   selectedDocIds,
   onToggleSelected,
   onSelect,
   onDelete,
+  onViewOriginal,
+  onRebuildDocument,
+  onCreateKnowledgeBase,
+  onRenameKnowledgeBase,
+  onDeleteKnowledgeBase,
+  onRebuildKnowledgeBase,
+  onSelectKnowledgeBase,
   onUpload,
   onGenerateSummary,
+  summarizingDocId,
   className,
 }: DocumentListProps) {
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
+  const [newKbName, setNewKbName] = useState("");
+  const [editingKbId, setEditingKbId] = useState<string | null>(null);
+  const [editingKbName, setEditingKbName] = useState("");
+  const [sourceDoc, setSourceDoc] = useState<Document | null>(null);
   const selectedSet = new Set(selectedDocIds ?? []);
   const selectedCount = selectedSet.size;
   const readyCount = documents.filter((d) => d.status === "ready").length;
@@ -87,15 +128,118 @@ export function DocumentList({
 
   return (
     <aside className={cn("flex h-full w-full flex-col bg-muted/30 border-r border-border", className)}>
-      {/* 顶部标题栏 */}
-      <div className="flex items-center justify-between px-4 pt-4 pb-2">
+      <div className="border-b border-border px-3 py-3">
+        <div className="mb-2 flex items-center justify-between">
+          <h2 className="text-[12px] font-bold tracking-wider text-muted-foreground uppercase">知识库管理</h2>
+          {activeKnowledgeBaseId && (
+            <button
+              type="button"
+              onClick={() => onRebuildKnowledgeBase?.(activeKnowledgeBaseId)}
+              className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+              title="重建当前知识库索引"
+            >
+              <RefreshCw className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </div>
+
+        <form
+          className="mb-2 flex gap-1.5"
+          onSubmit={(event) => {
+            event.preventDefault();
+            const name = newKbName.trim();
+            if (!name) return;
+            onCreateKnowledgeBase?.(name);
+            setNewKbName("");
+          }}
+        >
+          <input
+            value={newKbName}
+            onChange={(event) => setNewKbName(event.target.value)}
+            placeholder="新建知识库"
+            className="min-w-0 flex-1 rounded-md border border-border bg-background px-2 py-1.5 text-[12px] outline-none focus:border-primary"
+          />
+          <button
+            type="submit"
+            className="flex h-8 w-8 items-center justify-center rounded-md bg-primary text-primary-foreground hover:bg-primary/90"
+            title="新建知识库"
+          >
+            <Plus className="h-4 w-4" />
+          </button>
+        </form>
+
+        <div className="max-h-36 space-y-1 overflow-y-auto">
+          {knowledgeBases.map((kb) => {
+            const active = kb.id === activeKnowledgeBaseId;
+            const editing = editingKbId === kb.id;
+            return (
+              <div
+                key={kb.id}
+                className={cn(
+                  "flex items-center gap-2 rounded-md px-2 py-1.5 text-[12px]",
+                  active ? "bg-background ring-1 ring-border" : "hover:bg-background/60",
+                )}
+              >
+                <button
+                  type="button"
+                  onClick={() => onSelectKnowledgeBase?.(kb.id)}
+                  className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                >
+                  <Database className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                  {editing ? (
+                    <input
+                      value={editingKbName}
+                      autoFocus
+                      onClick={(event) => event.stopPropagation()}
+                      onChange={(event) => setEditingKbName(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") {
+                          onRenameKnowledgeBase?.(kb.id, editingKbName);
+                          setEditingKbId(null);
+                        }
+                        if (event.key === "Escape") setEditingKbId(null);
+                      }}
+                      className="min-w-0 flex-1 rounded border border-border bg-background px-1 py-0.5 outline-none"
+                    />
+                  ) : (
+                    <span className="min-w-0 flex-1 truncate text-foreground">{kb.name}</span>
+                  )}
+                  <span className="tabular-nums text-muted-foreground">{kb.documentCount}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (editing) {
+                      onRenameKnowledgeBase?.(kb.id, editingKbName);
+                      setEditingKbId(null);
+                    } else {
+                      setEditingKbId(kb.id);
+                      setEditingKbName(kb.name);
+                    }
+                  }}
+                  className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
+                  title="重命名"
+                >
+                  <Edit3 className="h-3 w-3" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onDeleteKnowledgeBase?.(kb.id)}
+                  className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                  title="删除知识库"
+                >
+                  <Trash2 className="h-3 w-3" />
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="flex items-center justify-between px-4 pt-3 pb-2">
         <div className="flex items-baseline gap-2">
-          <h2 className="text-[12px] font-bold tracking-wider text-muted-foreground uppercase">
-            我的库
-          </h2>
-          <span className="text-[11px] tabular-nums text-muted-foreground/60">
-            {documents.length}
-          </span>
+          <h3 className="text-[12px] font-bold tracking-wider text-muted-foreground uppercase">文档</h3>
+          <span className="text-[11px] tabular-nums text-muted-foreground/60">{documents.length}</span>
         </div>
         {readyCount > 0 && (
           <span className="text-[10px] tabular-nums text-muted-foreground/70">
@@ -198,6 +342,11 @@ export function DocumentList({
                             <AlertCircle className="h-3 w-3" />
                             解析失败
                           </span>
+                        ) : doc.status === "indexing" ? (
+                          <span className="flex items-center gap-1 text-primary">
+                            <RefreshCw className="h-3 w-3 animate-spin" />
+                            构建索引中
+                          </span>
                         ) : (
                           <>
                             <span className="uppercase">{doc.type}</span>
@@ -236,7 +385,7 @@ export function DocumentList({
                     <>
                       <div className="fixed inset-0 z-10" onClick={() => setMenuOpenId(null)} />
                       <div className={cn(
-                        "absolute right-2 top-11 z-20 w-32 overflow-hidden rounded-md border border-border bg-popover shadow-md animate-in fade-in zoom-in-95 duration-100",
+                        "absolute right-2 top-11 z-20 w-36 overflow-hidden rounded-md border border-border bg-popover shadow-md animate-in fade-in zoom-in-95 duration-100",
                       )}>
                         <button
                           type="button"
@@ -249,6 +398,29 @@ export function DocumentList({
                           <Trash2 className="h-3.5 w-3.5" strokeWidth={2} />
                           删除文档
                         </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            onRebuildDocument?.(doc.id);
+                            setMenuOpenId(null);
+                          }}
+                          className="flex w-full items-center gap-2 px-3 py-2 text-left text-[12px] text-foreground hover:bg-muted transition-colors"
+                        >
+                          <RefreshCw className="h-3.5 w-3.5" strokeWidth={2} />
+                          重建索引
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            onViewOriginal?.(doc.id);
+                            setSourceDoc(doc);
+                            setMenuOpenId(null);
+                          }}
+                          className="flex w-full items-center gap-2 px-3 py-2 text-left text-[12px] text-foreground hover:bg-muted transition-colors"
+                        >
+                          <Eye className="h-3.5 w-3.5" strokeWidth={2} />
+                          查看原文
+                        </button>
                       </div>
                     </>
                   )}
@@ -260,7 +432,11 @@ export function DocumentList({
       </div>
 
       {activeDocument && (
-        <DocumentSummaryPanel document={activeDocument} onGenerateSummary={onGenerateSummary} />
+        <DocumentSummaryPanel
+          document={activeDocument}
+          onGenerateSummary={onGenerateSummary}
+          isSummarizing={summarizingDocId === activeDocument.id}
+        />
       )}
 
       {/* 底部容量统计 */}
@@ -271,6 +447,32 @@ export function DocumentList({
             <span className="tabular-nums">
               {formatSize(documents.reduce((sum, d) => sum + (d.size || 0), 0))}
             </span>
+          </div>
+        </div>
+      )}
+
+      {sourceDoc && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/70 p-6 backdrop-blur-sm">
+          <div className="flex h-[86vh] w-[78vw] flex-col overflow-hidden rounded-lg border border-border bg-background shadow-xl">
+            <div className="flex items-center justify-between border-b border-border px-4 py-3">
+              <div className="min-w-0">
+                <p className="truncate text-sm font-semibold text-foreground">{sourceDoc.name}</p>
+                <p className="text-[11px] text-muted-foreground">原文档预览</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSourceDoc(null)}
+                className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+                aria-label="关闭"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <iframe
+              src={getDocumentFileUrlById(sourceDoc.id)}
+              title={`原文档: ${sourceDoc.name}`}
+              className="h-full w-full bg-white"
+            />
           </div>
         </div>
       )}
@@ -292,34 +494,49 @@ function hasSummaryContent(summary: Document["summary"]): boolean {
 function DocumentSummaryPanel({
   document,
   onGenerateSummary,
+  isSummarizing,
 }: {
   document: Document;
   onGenerateSummary?: (id: string) => void;
+  isSummarizing?: boolean;
 }) {
   const summary = document.summary;
   const hasContent = hasSummaryContent(summary);
 
   return (
-    <div className="max-h-[42%] overflow-y-auto border-t border-border bg-background/70 px-4 py-3">
+    <div className="max-h-[34%] overflow-y-auto border-t border-border bg-background/70 px-4 py-3">
       <div className="mb-2 flex items-center justify-between">
         <h3 className="text-[12px] font-bold uppercase tracking-wider text-muted-foreground">文档详情</h3>
-        <span className="max-w-28 truncate text-[10px] text-muted-foreground">{document.name}</span>
+        <div className="flex min-w-0 items-center gap-2">
+          {summary?.summary_origin === "local_fallback" && (
+            <span className="shrink-0 rounded bg-amber-500/10 px-1.5 py-0.5 text-[10px] text-amber-600 dark:text-amber-400">
+              本地兜底
+            </span>
+          )}
+          {summary?.summary_origin?.startsWith("llm") && (
+            <span className="shrink-0 rounded bg-emerald-500/10 px-1.5 py-0.5 text-[10px] text-emerald-600 dark:text-emerald-400">
+              AI 摘要
+            </span>
+          )}
+          <span className="max-w-36 truncate text-[10px] text-muted-foreground">{document.name}</span>
+        </div>
       </div>
 
       {!hasContent && (
         <div className="rounded-md border border-dashed border-border bg-muted/20 px-3 py-3">
           <p className="text-[12px] font-medium text-foreground">暂无摘要</p>
           <p className="mt-1 text-[11px] leading-4 text-muted-foreground">
-            旧文档或上次生成失败时会出现这种情况，可以手动生成摘要。
+            旧文档可能还没有摘要，可以手动生成。
           </p>
           {onGenerateSummary && (
             <button
               type="button"
+              disabled={isSummarizing}
               onClick={() => onGenerateSummary(document.id)}
-              className="mt-3 inline-flex items-center gap-1.5 rounded-md bg-primary px-2.5 py-1.5 text-[11px] font-medium text-primary-foreground hover:bg-primary/90"
+              className="mt-3 inline-flex items-center gap-1.5 rounded-md bg-primary px-2.5 py-1.5 text-[11px] font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-wait disabled:opacity-70"
             >
-              <Sparkles className="h-3 w-3" />
-              生成摘要
+              {isSummarizing ? <RefreshCw className="h-3 w-3 animate-spin" /> : <Sparkles className="h-3 w-3" />}
+              {isSummarizing ? "生成中" : "生成摘要"}
             </button>
           )}
         </div>

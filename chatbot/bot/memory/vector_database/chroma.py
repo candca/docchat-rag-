@@ -13,6 +13,13 @@ from helpers.log import get_logger
 logger = get_logger(__name__)
 
 
+def _chunk_index_value(metadata: dict[str, Any]) -> int:
+    try:
+        return int(metadata.get("chunk_index", 10**9))
+    except (TypeError, ValueError):
+        return 10**9
+
+
 class Chroma:
     def __init__(
         self,
@@ -359,11 +366,36 @@ class Chroma:
             for doc, metadata in zip(documents, metadatas, strict=False)
             if doc
         ]
-        rows.sort(key=lambda row: row[1].get("chunk_index", 10**9))
+        rows.sort(key=lambda row: _chunk_index_value(row[1]))
         return [
             Document(page_content=doc, metadata=metadata)
             for doc, metadata in rows[:limit]
         ]
+
+    def get_chunks(self, where: dict[str, Any] | None = None, limit: int | None = None) -> list[Document]:
+        """
+        Return stored chunks matching a metadata filter.
+
+        This is used by hybrid retrieval for keyword/BM25 candidate generation.
+        """
+        results = self.collection.get(
+            where=where,
+            include=["documents", "metadatas"],
+        )
+        documents = results.get("documents") or []
+        metadatas = results.get("metadatas") or []
+        chunks = [
+            Document(page_content=doc, metadata=metadata or {})
+            for doc, metadata in zip(documents, metadatas, strict=False)
+            if doc
+        ]
+        chunks.sort(
+            key=lambda chunk: (
+                str(chunk.metadata.get("document_id", "")),
+                _chunk_index_value(chunk.metadata),
+            )
+        )
+        return chunks[:limit] if limit is not None else chunks
 
     def similarity_search_with_threshold(
         self,

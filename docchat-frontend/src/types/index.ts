@@ -39,6 +39,15 @@ export interface DocumentSummary {
   section_summaries: Array<{ title: string; summary: string }>;
   keywords: string[];
   outline: string[];
+  summary_origin?: string;
+}
+
+export interface KnowledgeBase {
+  id: string;
+  name: string;
+  documentCount: number;
+  createdAt: string;
+  updatedAt: string;
 }
 
 /** 左栏文档列表中的一项 */
@@ -47,10 +56,11 @@ export interface Document {
   id: string;
   /** 对应后端 filename */
   name: string;
+  knowledgeBaseId: string;
   /** 从文件名后缀派生 */
   type: "pdf" | "docx" | "md";
   /** 后端无中间态：要么 ready 要么 error */
-  status: "ready" | "error";
+  status: "ready" | "indexing" | "error";
   /** 上传时间戳(ms，用拉取时间近似) */
   uploadedAt: number;
   /** 文件大小(bytes),可选 */

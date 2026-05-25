@@ -17,11 +17,13 @@ class DocumentRecord(SQLModel, table=True):
 
     document_id: str = Field(primary_key=True)
     user_id: str = Field(default="legacy", index=True)
+    knowledge_base_id: str = Field(default="default", index=True)
     source: str = Field(default="")
     filename: str = Field(default="")
     size: int = Field(default=0)
     content_type: str = Field(default="")
     version_hash: str = Field(default="")
+    parse_status: str = Field(default="ready")
     summary_json: str = Field(default="{}")
     chunk_ids_json: str = Field(default="[]", sa_column_kwargs={"name": "chunk_ids"})
 
@@ -68,11 +70,13 @@ class DocumentRegistry:
     # public API
     # ------------------------------------------------------------------
 
-    def get_all(self, user_id: str | None = None) -> list[DocumentRecord]:
+    def get_all(self, user_id: str | None = None, knowledge_base_id: str | None = None) -> list[DocumentRecord]:
         """Return every document record."""
         statement = select(DocumentRecord)
         if user_id is not None:
             statement = statement.where(DocumentRecord.user_id == user_id)
+        if knowledge_base_id is not None:
+            statement = statement.where(DocumentRecord.knowledge_base_id == knowledge_base_id)
         return list(self._session.exec(statement).all())
 
     def get(self, document_id: str, user_id: str | None = None) -> DocumentRecord | None:
@@ -87,11 +91,13 @@ class DocumentRegistry:
         document_id: str,
         *,
         user_id: str = "legacy",
+        knowledge_base_id: str = "default",
         source: str = "",
         filename: str = "",
         size: int = 0,
         content_type: str = "",
         version_hash: str = "",
+        parse_status: str = "ready",
         summary: dict | None = None,
         chunk_ids: list[str] | None = None,
     ) -> None:
@@ -100,11 +106,13 @@ class DocumentRegistry:
         existing = self._session.get(DocumentRecord, document_id)
         if existing:
             existing.user_id = user_id
+            existing.knowledge_base_id = knowledge_base_id
             existing.source = source
             existing.filename = filename
             existing.size = size
             existing.content_type = content_type
             existing.version_hash = version_hash
+            existing.parse_status = parse_status
             existing.summary = summary or {}
             existing.chunk_ids = chunk_ids or []
             self._session.add(existing)
@@ -112,11 +120,13 @@ class DocumentRegistry:
             record = DocumentRecord(
                 document_id=document_id,
                 user_id=user_id,
+                knowledge_base_id=knowledge_base_id,
                 source=source,
                 filename=filename,
                 size=size,
                 content_type=content_type,
                 version_hash=version_hash,
+                parse_status=parse_status,
                 summary_json=json.dumps(summary or {}, ensure_ascii=False),
                 chunk_ids_json=json.dumps(chunk_ids or []),
             )
@@ -130,11 +140,18 @@ class DocumentRegistry:
             self._session.delete(record)
             self._session.commit()
 
-    def get_by_filename(self, filename: str, user_id: str | None = None) -> DocumentRecord | None:
+    def get_by_filename(
+        self,
+        filename: str,
+        user_id: str | None = None,
+        knowledge_base_id: str | None = None,
+    ) -> DocumentRecord | None:
         """Look up a document by its filename."""
         statement = select(DocumentRecord).where(DocumentRecord.filename == filename)
         if user_id is not None:
             statement = statement.where(DocumentRecord.user_id == user_id)
+        if knowledge_base_id is not None:
+            statement = statement.where(DocumentRecord.knowledge_base_id == knowledge_base_id)
         return self._session.exec(statement).first()
 
     def get_stale_documents(
