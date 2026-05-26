@@ -21,6 +21,10 @@ class Settings(BaseSettings):
     # Logging Configuration
     LOG_LEVEL: str = "INFO"
 
+    # CORS allowed origins. Override via .env when serving the frontend
+    # from another machine (e.g. CORS_ORIGINS=["http://192.168.1.10:5173"]).
+    # An entry of "*" disables the whitelist — only use that on a trusted
+    # LAN since it forces allow_credentials=False at runtime.
     CORS_ORIGINS: list[str] = [
         "http://localhost:5173",
         "http://localhost:5174",
@@ -30,6 +34,11 @@ class Settings(BaseSettings):
         "http://127.0.0.1:5174",
         "http://127.0.0.1:5175",
     ]
+    # When non-empty, allow any origin whose host matches one of these
+    # regular expressions. Use to support a range of LAN IPs without
+    # listing every port.
+    # Example: ["http://192\\.168\\.1\\.[0-9]+(:[0-9]+)?$"]
+    CORS_ORIGIN_REGEX: list[str] = []
 
     MODEL_FOLDER: Path = ROOT_PATH / "models"
     VECTOR_STORE_PATH: Path = ROOT_PATH / "vector_store" / "docs_index"
@@ -37,6 +46,10 @@ class Settings(BaseSettings):
 
     DATABASE_URL: str = f"sqlite:///{ROOT_PATH / 'vector_store' / 'registry.db'}"
     AUTH_SECRET_KEY: str = "change-me-docchat-local-secret"
+
+    # 注册邀请码。留空时注册开放（任何人可注册）；非空时必须匹配。
+    # 推荐内网/多人场景下设置一个随机字符串。
+    REGISTRATION_INVITE_CODE: str = ""
 
     # DeepSeek API (set this to use API mode instead of local llama.cpp)
     DEEPSEEK_API_KEY: str = ""

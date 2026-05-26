@@ -6,6 +6,10 @@ class AuthRequest(BaseModel):
     password: str = Field(min_length=4, max_length=256)
 
 
+class RegisterRequest(AuthRequest):
+    invite_code: str = ""
+
+
 class UserInfo(BaseModel):
     user_id: str
     username: str

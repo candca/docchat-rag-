@@ -1,8 +1,10 @@
+import hmac
 import secrets
 
 from auth import User, create_token, hash_password, verify_password
+from core.config import settings
 from fastapi import APIRouter, HTTPException
-from schemas.auth import AuthRequest, AuthResponse, UserInfo
+from schemas.auth import AuthRequest, AuthResponse, RegisterRequest, UserInfo
 from sqlmodel import select
 
 from api.deps import CurrentUserDep, SessionDep
@@ -15,7 +17,13 @@ def user_info(user: User) -> UserInfo:
 
 
 @router.post("/auth/register", response_model=AuthResponse, status_code=201)
-async def register(payload: AuthRequest, session: SessionDep):
+async def register(payload: RegisterRequest, session: SessionDep):
+    expected_code = settings.REGISTRATION_INVITE_CODE
+    if expected_code:
+        # 用 compare_digest 防时序攻击
+        if not hmac.compare_digest(payload.invite_code or "", expected_code):
+            raise HTTPException(status_code=403, detail="邀请码无效")
+
     username = payload.username.strip()
     if not username:
         raise HTTPException(status_code=400, detail="Username is required.")

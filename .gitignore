@@ -70,3 +70,8 @@ DocChat项目源码精读.md
 多人访问改造方案.md
 迁移指南_docchat-frontend替换frontend.md
 项目联调说明_2026-05-14.md
+同步协作者更新_2026-05-26.md
+
+# Runtime-uploaded documents (per-user UUID dirs under docs/)
+# 保留 docs/ 下顶层的 .md/.pdf 项目资料，忽略所有子目录
+docs/*/

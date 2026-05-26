@@ -4,7 +4,12 @@ import { MessageSquareText } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 export interface LoginScreenProps {
-  onLogin: (username: string, password: string, mode: "login" | "register") => Promise<void>;
+  onLogin: (
+    username: string,
+    password: string,
+    mode: "login" | "register",
+    inviteCode?: string,
+  ) => Promise<void>;
   error?: unknown;
 }
 
@@ -12,13 +17,14 @@ export function LoginScreen({ onLogin, error }: LoginScreenProps) {
   const [mode, setMode] = useState<"login" | "register">("login");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [inviteCode, setInviteCode] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     setSubmitting(true);
     try {
-      await onLogin(username, password, mode);
+      await onLogin(username, password, mode, mode === "register" ? inviteCode : undefined);
     } finally {
       setSubmitting(false);
     }
@@ -62,6 +68,19 @@ export function LoginScreen({ onLogin, error }: LoginScreenProps) {
               required
             />
           </label>
+          {mode === "register" && (
+            <label className="block">
+              <span className="mb-1 block text-xs font-medium text-muted-foreground">邀请码</span>
+              <input
+                value={inviteCode}
+                onChange={(event) => setInviteCode(event.target.value)}
+                className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring"
+                autoComplete="off"
+                placeholder="向管理员索取"
+                required
+              />
+            </label>
+          )}
         </div>
 
         {Boolean(error) && (

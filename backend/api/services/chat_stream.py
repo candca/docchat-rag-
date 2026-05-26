@@ -1,5 +1,6 @@
 import time
 
+from bot.conversation.chat_history import ChatHistory
 from bot.conversation.conversation_handler import (
     answer,
     answer_with_context,
@@ -15,7 +16,7 @@ from retrieval import hybrid_search_with_rerank
 from schemas.chat import ChatRequest
 from auth import User
 
-from api.deps import ChatHistoryDep, LamaCppClientDep, VectorDatabaseDep
+from api.deps import LamaCppClientDep, VectorDatabaseDep
 
 logger = get_logger(__name__)
 
@@ -50,7 +51,7 @@ def source_from_chunk(chunk, score: float = 1.0) -> dict:
 
 # TODO: https://github.com/umbertogriffo/rag-chatbot/pull/10#discussion_r2936567672
 async def stream_chat_response(
-    websocket: WebSocket, llm_client: LamaCppClientDep, query: ChatRequest, chat_history: ChatHistoryDep
+    websocket: WebSocket, llm_client: LamaCppClientDep, query: ChatRequest, chat_history: ChatHistory
 ):
     """
     Helper function to stream chat responses token by token.
@@ -58,7 +59,7 @@ async def stream_chat_response(
         websocket (WebSocket): The WebSocket connection to send responses through.
         llm_client (LamaCppClientDep): The LLM client dependency for generating responses.
         query (ChatRequest): The chat request containing the user's query.
-        chat_history (ChatHistoryDep): The chat history dependency to maintain conversation context.
+        chat_history (ChatHistory): The user's chat history for maintaining conversation context.
     """
     try:
         start_time = time.time()
@@ -98,7 +99,7 @@ async def stream_rag_response(
     websocket: WebSocket,
     llm_client: LamaCppClientDep,
     query: ChatRequest,
-    chat_history: ChatHistoryDep,
+    chat_history: ChatHistory,
     index: VectorDatabaseDep,
     current_user: User,
 ):
@@ -108,7 +109,7 @@ async def stream_rag_response(
         websocket (WebSocket): The WebSocket connection to send responses through.
         llm_client (LamaCppClientDep): The LLM client dependency for generating responses.
         query (ChatRequest): The chat request containing the user's query.
-        chat_history (ChatHistoryDep): The chat history dependency to maintain conversation context.
+        chat_history (ChatHistory): The user's chat history for maintaining conversation context.
         index (VectorDatabaseDep): The vector database dependency for retrieval.
     """
     try:

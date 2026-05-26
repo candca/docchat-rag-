@@ -6,9 +6,7 @@ from typing import Annotated, Any, Generator
 
 import state
 from auth import User, parse_token
-from bot.conversation.chat_history import ChatHistory
 from bot.memory.vector_database.chroma import Chroma
-from chat_history import chat_history
 from fastapi import Depends, Header, HTTPException, Query, status
 from sqlmodel import Session
 
@@ -18,13 +16,6 @@ def get_llm_client() -> Generator[Any, None, None]:
     Dependency to get the LLM client instance.
     """
     yield state.llm_client
-
-
-def get_chat_history() -> Generator[ChatHistory, None, None]:
-    """
-    Dependency to get the chat history instance.
-    """
-    yield chat_history
 
 
 def get_index() -> Generator[Chroma, None, None]:
@@ -77,7 +68,6 @@ def get_current_user_from_ws(session: Session, token: str | None = None) -> User
 
 
 LamaCppClientDep = Annotated[Any, Depends(get_llm_client)]
-ChatHistoryDep = Annotated[ChatHistory, Depends(get_chat_history)]
 VectorDatabaseDep = Annotated[Chroma, Depends(get_index)]
 SessionDep = Annotated[Session, Depends(get_db_session)]
 CurrentUserDep = Annotated[User, Depends(get_current_user)]

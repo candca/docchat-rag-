@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 import state
 import uvicorn
 from api.routes import api_router
+from chat_history import chat_history_manager
 from core.config import settings
 from database import create_db_engine, ensure_database_schema
 from fastapi import FastAPI
@@ -21,10 +22,12 @@ async def lifespan(app: FastAPI):
     ensure_database_schema(state.engine)
     state.llm_client = create_llm_client(settings.MODEL_FOLDER)
     state.index = init_index(settings.VECTOR_STORE_PATH)
+    chat_history_manager.start_cleanup_task()
 
     yield
 
     # Cleanup
+    await chat_history_manager.stop_cleanup_task()
     if state.engine:
         state.engine.dispose()
         logger.info("Database engine disposed")
@@ -40,10 +43,18 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+_allow_any_origin = "*" in settings.CORS_ORIGINS
+_origin_regex = "|".join(f"(?:{p})" for p in settings.CORS_ORIGIN_REGEX) if settings.CORS_ORIGIN_REGEX else None
+if _allow_any_origin:
+    logger.warning("CORS_ORIGINS includes '*': credentialed requests will be rejected by the browser.")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.CORS_ORIGINS,
-    allow_credentials=True,
+    allow_origins=["*"] if _allow_any_origin else settings.CORS_ORIGINS,
+    allow_origin_regex=_origin_regex,
+    # The CORS spec forbids credentials with a wildcard origin; pass False
+    # when "*" is in use so the browser doesn't strip the response header.
+    allow_credentials=not _allow_any_origin,
     allow_methods=["*"],
     allow_headers=["*"],
 )

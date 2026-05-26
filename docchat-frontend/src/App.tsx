@@ -126,16 +126,16 @@ function App() {
   )
 
   const handleAuth = useCallback(
-    async (username: string, password: string, mode: 'login' | 'register') => {
+    async (username: string, password: string, mode: 'login' | 'register', inviteCode?: string) => {
       setAuthError(null)
       try {
         const response = mode === 'login'
           ? await login(username, password)
-          : await register(username, password)
+          : await register(username, password, inviteCode)
         switchUserState(response.user.user_id)
         setUser(response.user)
       } catch (error) {
-        setAuthError(formatRequestError(error, '登录失败，请检查用户名和密码'))
+        setAuthError(formatRequestError(error, mode === 'login' ? '登录失败，请检查用户名和密码' : '注册失败，请检查邀请码和用户名'))
         throw error
       }
     },

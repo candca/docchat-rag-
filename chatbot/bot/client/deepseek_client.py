@@ -110,7 +110,7 @@ class DeepSeekClient:
     @staticmethod
     def _iter_stream_tokens(response: requests.Response):
         try:
-            for line in response.iter_lines(decode_unicode=True):
+            for line in response.iter_lines(decode_unicode=True, chunk_size=1):
                 if not line or not line.startswith("data:"):
                     continue
                 data = line.removeprefix("data:").strip()

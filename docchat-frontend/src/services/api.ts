@@ -1,6 +1,15 @@
 import axios from 'axios'
 
-const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:8000'
+// 当 VITE_API_URL 为空时，根据浏览器当前 host 推导后端地址（端口固定 8000）。
+// 这样同一个 build 既能从 localhost 访问，也能从局域网 IP 访问。
+const API_BASE = (() => {
+  const envUrl = import.meta.env.VITE_API_URL
+  if (envUrl) return envUrl
+  if (typeof window !== 'undefined') {
+    return `${window.location.protocol}//${window.location.hostname}:8000`
+  }
+  return 'http://localhost:8000'
+})()
 const AUTH_TOKEN_KEY = 'docchat-auth-token'
 
 const api = axios.create({ baseURL: API_BASE })
@@ -38,8 +47,16 @@ export async function login(username: string, password: string): Promise<AuthRes
   return response.data
 }
 
-export async function register(username: string, password: string): Promise<AuthResponse> {
-  const response = await api.post<AuthResponse>('/auth/register', { username, password })
+export async function register(
+  username: string,
+  password: string,
+  inviteCode?: string,
+): Promise<AuthResponse> {
+  const response = await api.post<AuthResponse>('/auth/register', {
+    username,
+    password,
+    invite_code: inviteCode ?? '',
+  })
   setAuthToken(response.data.token)
   return response.data
 }

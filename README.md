@@ -271,6 +271,71 @@ Once you upload one or multiple files, they will be: uploaded → chunked → em
 
 ![rag_chatbot_load_doc_example.gif](images/rag_chatbot_load_doc_example.gif)
 
+## 多人访问部署（局域网）
+
+适用场景：把服务部署在一台机器（"服务器"）上，让局域网内 2~10 台电脑通过浏览器访问。
+单进程 + 内存里按用户隔离的 `ChatHistoryManager`，不需要 Redis / 多 worker。
+
+完整方案见 [`多人访问改造方案.md`](./多人访问改造方案.md)。下面是改完之后的部署步骤。
+
+### 1. 服务器端 `.env`（项目根目录）
+
+```dotenv
+# 让 Caddy / Nginx / 浏览器都能访问，不需要改 HOST
+HOST=0.0.0.0
+PORT=8000
+
+# DeepSeek API（用 API 比本地 llama.cpp 更适合多人并发）
+DEEPSEEK_API_KEY=sk-...
+MODEL=deepseek-chat
+
+# CORS：把客户端浏览器看到的前端地址加进来
+# 例：服务器 IP 是 192.168.1.10，前端用 5173 端口托管
+CORS_ORIGINS=["http://192.168.1.10:5173","http://localhost:5173","http://127.0.0.1:5173"]
+# 或者用正则匹配一整段：
+# CORS_ORIGIN_REGEX=["http://192\\.168\\.1\\.[0-9]+(:[0-9]+)?$"]
+
+# 给 token 签名用，**务必换成随机串**
+AUTH_SECRET_KEY=<openssl rand -hex 32>
+```
+
+### 2. 前端 `.env`（`docchat-frontend/.env`）
+
+```dotenv
+# 客户端浏览器请求后端时用的地址（不是 localhost！）
+VITE_API_URL=http://192.168.1.10:8000
+```
+
+> Vite 的 env 在 **构建时** 嵌入 bundle，所以改完后要重新 `npm run build`。
+
+### 3. 启动
+
+服务器端：
+
+```powershell
+# 后端
+.\_start_backend.bat                 # 会自动 venv\Scripts\python.exe migration.py + uvicorn
+
+# 前端（生产构建 + 静态托管，5173 端口）
+cd docchat-frontend
+npm install
+npm run build
+npx serve dist -l 5173 --cors
+```
+
+> 防火墙记得放行 8000（后端）和 5173（前端）。Windows 上：`控制面板 → Windows Defender 防火墙 → 高级设置 → 入站规则`。
+
+### 4. 客户端访问
+
+其它电脑浏览器打开 `http://192.168.1.10:5173`，注册或登录账号后即可使用。
+
+### 多人访问保证
+
+- 每个登录用户的对话历史按 `user_id` 隔离（`backend/chat_history.py` 的 `ChatHistoryManager`），1 小时无活动自动回收
+- 文档/知识库按 `user_id` 隔离（A 的文档 B 看不到）
+- `DELETE /chat/history` 只清当前用户的服务端历史
+- WebSocket 需要在 query string 里带 `token=xxx`，未认证连接会被拒（1008）
+
 ## References
 
 * Large Language Models (LLMs):

@@ -2,12 +2,10 @@ type TokenHandler = (token: string) => void
 type ErrorHandler = (error: string) => void
 
 const WS_BASE = (() => {
-  const apiUrl = import.meta.env.VITE_API_URL ?? 'http://localhost:8000'
-  if (apiUrl) {
-    return apiUrl.replace(/^http/, 'ws')
-  }
+  const envUrl = import.meta.env.VITE_API_URL
+  if (envUrl) return envUrl.replace(/^http/, 'ws')
   const proto = window.location.protocol === 'https:' ? 'wss' : 'ws'
-  return `${proto}://${window.location.host}`
+  return `${proto}://${window.location.hostname}:8000`
 })()
 
 const WS_URL = `${WS_BASE}/chat/stream`
