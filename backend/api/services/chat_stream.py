@@ -42,9 +42,12 @@ def is_overview_query(text: str) -> bool:
 
 
 def source_from_chunk(chunk, score: float = 1.0) -> dict:
+    metadata = chunk.metadata or {}
     return {
         "score": score,
-        "document": chunk.metadata.get("source"),
+        "document": metadata.get("source"),
+        "document_id": metadata.get("document_id"),
+        "page": metadata.get("page"),
         "content_preview": chunk.page_content,
     }
 

@@ -99,9 +99,12 @@ def bm25_scores(query_tokens: list[str], documents: list[Document]) -> dict[tupl
 
 def build_source(candidate: RetrievalCandidate) -> dict[str, Any]:
     document = candidate.document
+    metadata = document.metadata or {}
     return {
         "score": round(candidate.rerank_score or candidate.fused_score, 3),
-        "document": document.metadata.get("source"),
+        "document": metadata.get("source"),
+        "document_id": metadata.get("document_id"),
+        "page": metadata.get("page"),
         "content_preview": document.page_content,
         "retrieval": {
             "vector": round(candidate.vector_score, 3),

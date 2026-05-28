@@ -2,7 +2,13 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Quote, ExternalLink, Hash, FileText, X, Loader2, AlertCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { Citation } from "@/types";
-import { getDocumentContent, getDocumentFileUrl } from "@/services/api";
+import {
+  getDocumentContent,
+  getDocumentFileUrl,
+  getPdfPageImageUrl,
+  getPdfPagePreview,
+  type PdfPagePreviewResponse,
+} from "@/services/api";
 
 export interface CitationPanelProps {
   /** 全部引用列表 */
@@ -35,6 +41,8 @@ export function CitationPanel({
     fileUrl: string;
     filename: string;
     mode: "pdf" | "text";
+    pdfPreview?: PdfPagePreviewResponse;
+    pdfImageUrl?: string;
   } | null>(null);
   const [sourceLoading, setSourceLoading] = useState(false);
   const [sourceError, setSourceError] = useState<string | null>(null);
@@ -46,11 +54,19 @@ export function CitationPanel({
     try {
       const isPdf = citation.docName.toLowerCase().endsWith(".pdf");
       if (isPdf) {
+        let pdfPreview: PdfPagePreviewResponse | undefined;
+        try {
+          pdfPreview = await getPdfPagePreview(citation.docName, citation.page, citation.snippet);
+        } catch {
+          pdfPreview = undefined;
+        }
         setSourceView({
           citation,
           fileUrl: getDocumentFileUrl(citation.docName),
           filename: citation.docName,
           mode: "pdf",
+          pdfPreview,
+          pdfImageUrl: pdfPreview ? getPdfPageImageUrl(citation.docName, pdfPreview.page) : undefined,
         });
         return;
       }
@@ -148,7 +164,7 @@ export function CitationPanel({
                           {cite.docName}
                         </span>
                       </div>
-                      
+
                       {/* 页码标记 */}
                       {cite.page && (
                         <div className="mt-1 flex items-center gap-1 text-[11px] text-muted-foreground/80">
@@ -229,6 +245,8 @@ export function CitationPanel({
           content={sourceView.content}
           fileUrl={sourceView.fileUrl}
           mode={sourceView.mode}
+          pdfPreview={sourceView.pdfPreview}
+          pdfImageUrl={sourceView.pdfImageUrl}
           snippet={sourceView.citation.snippet}
           page={sourceView.citation.page}
           onClose={() => setSourceView(null)}
@@ -319,6 +337,8 @@ function SourceDrawer({
   content,
   fileUrl,
   mode,
+  pdfPreview,
+  pdfImageUrl,
   snippet,
   page,
   onClose,
@@ -327,12 +347,13 @@ function SourceDrawer({
   content?: string;
   fileUrl: string;
   mode: "pdf" | "text";
+  pdfPreview?: PdfPagePreviewResponse;
+  pdfImageUrl?: string;
   snippet?: string;
   page?: number;
   onClose: () => void;
 }) {
   const highlightRef = useRef<HTMLElement | null>(null);
-  const [pdfReloadNonce, setPdfReloadNonce] = useState(0);
   const previewUrl = useMemo(() => {
     return mode === "pdf" ? withPdfFragment(fileUrl, snippet, page) : fileUrl;
   }, [fileUrl, mode, page, snippet]);
@@ -370,7 +391,7 @@ function SourceDrawer({
 
   const handleSnippetClick = () => {
     if (mode === "pdf") {
-      setPdfReloadNonce((value) => value + 1);
+      document.getElementById("pdf-highlight-page")?.scrollIntoView({ behavior: "smooth", block: "center" });
       return;
     }
 
@@ -448,17 +469,93 @@ function SourceDrawer({
       )}
 
       {mode === "pdf" ? (
-        <iframe
-          key={`${previewUrl}:${pdfReloadNonce}`}
-          title={`原始 PDF: ${filename}`}
-          src={previewUrl}
-          className="h-full min-h-0 flex-1 border-0 bg-muted"
+        <PdfPageView
+          filename={filename}
+          imageUrl={pdfImageUrl}
+          preview={pdfPreview}
+          fallbackUrl={previewUrl}
         />
       ) : (
         <div className="flex-1 overflow-y-auto px-6 py-5">
           {renderedText}
         </div>
       )}
+    </div>
+  );
+}
+
+function PdfPageView({
+  filename,
+  imageUrl,
+  preview,
+  fallbackUrl,
+}: {
+  filename: string;
+  imageUrl?: string;
+  preview?: PdfPagePreviewResponse;
+  fallbackUrl: string;
+}) {
+  if (!imageUrl || !preview) {
+    return (
+      <iframe
+        title={`原始 PDF: ${filename}`}
+        src={fallbackUrl}
+        className="h-full min-h-0 flex-1 border-0 bg-muted"
+      />
+    );
+  }
+
+  const highlightBox = preview.boxes.length > 0
+    ? preview.boxes.reduce(
+        (acc, box) => [
+          Math.min(acc[0], box[0]),
+          Math.min(acc[1], box[1]),
+          Math.max(acc[2], box[2]),
+          Math.max(acc[3], box[3]),
+        ],
+        [...preview.boxes[0]],
+      )
+    : null;
+
+  return (
+    <div className="flex-1 overflow-auto bg-muted px-6 py-5">
+      <div className="mx-auto w-full max-w-5xl">
+        <div className="mb-3 flex items-center justify-between text-[11px] text-muted-foreground">
+          <span className="font-medium tabular-nums">
+            Page {preview.page} / {preview.page_count}
+          </span>
+          {highlightBox ? (
+            <span>已高亮相关片段</span>
+          ) : (
+            <span>未能精确匹配片段，已定位到页面</span>
+          )}
+        </div>
+        <div
+          id="pdf-highlight-page"
+          className="relative overflow-hidden rounded-md border border-border bg-background shadow-sm"
+          style={{ aspectRatio: `${preview.width} / ${preview.height}` }}
+        >
+          <img
+            src={imageUrl}
+            alt={`${filename} page ${preview.page}`}
+            className="absolute inset-0 h-full w-full object-contain"
+          />
+          {highlightBox && (() => {
+            const [x0, y0, x1, y1] = highlightBox;
+            return (
+              <div
+                className="pointer-events-none absolute rounded-md bg-amber-300/35 ring-2 ring-amber-500/75 shadow-[0_0_0_9999px_rgba(0,0,0,0.08)]"
+                style={{
+                  left: `${(x0 / preview.width) * 100}%`,
+                  top: `${((preview.height - y1) / preview.height) * 100}%`,
+                  width: `${((x1 - x0) / preview.width) * 100}%`,
+                  height: `${((y1 - y0) / preview.height) * 100}%`,
+                }}
+              />
+            );
+          })()}
+        </div>
+      </div>
     </div>
   );
 }

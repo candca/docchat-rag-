@@ -1,4 +1,5 @@
 import argparse
+import re
 import sys
 from pathlib import Path
 
@@ -15,6 +16,8 @@ from helpers.log import get_logger
 from sqlmodel import Session
 
 logger = get_logger(__name__)
+
+PAGE_MARKER_RE = re.compile(r"##\s*Page\s+(\d+)", re.IGNORECASE)
 
 
 def load_documents(docs_path: Path) -> list[Document]:
@@ -54,6 +57,25 @@ def split_chunks(sources: list, chunk_size: int = 1000, chunk_overlap: int = 50)
     for chunk in splitter.split_documents(sources):
         chunks.append(chunk)
     return chunks
+
+
+def infer_chunk_page(chunk_text: str, full_text: str | None = None) -> int | None:
+    direct = PAGE_MARKER_RE.findall(chunk_text or "")
+    if direct:
+        return int(direct[-1])
+
+    if not full_text:
+        return None
+
+    start = full_text.find(chunk_text)
+    if start == -1:
+        compact_chunk = re.sub(r"\s+", " ", chunk_text).strip()
+        start = full_text.find(compact_chunk[:160]) if compact_chunk else -1
+    if start == -1:
+        return None
+
+    markers = PAGE_MARKER_RE.findall(full_text[:start])
+    return int(markers[-1]) if markers else None
 
 
 def build_memory_index(

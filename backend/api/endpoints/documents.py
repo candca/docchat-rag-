@@ -7,10 +7,11 @@ from core.config import settings
 from document_summary import generate_document_summary, normalize_document_summary
 from document_loader.loader import DirectoryLoader, load_file_text
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from helpers.log import get_logger
 from knowledge_base import KnowledgeBaseRegistry
-from memory_builder import split_chunks
+from memory_builder import infer_chunk_page, split_chunks
+from pdf_preview import get_pdf_page_preview, render_pdf_page_png
 from schemas.documents import (
     DocumentContentResponse,
     DocumentInfo,
@@ -20,6 +21,7 @@ from schemas.documents import (
     KnowledgeBaseInfo,
     KnowledgeBaseListResponse,
     KnowledgeBaseUpdateRequest,
+    PdfPagePreviewResponse,
 )
 
 from api.deps import CurrentUserDep, LamaCppClientDep, SessionDep, VectorDatabaseDep
@@ -38,10 +40,30 @@ def get_document_record_by_filename(session: SessionDep, filename: str, user_id:
 
 
 def get_source_file_path(record) -> Path:
-    file_path = Path(record.source) if record.source else settings.DOCS_PATH / record.filename
-    if not file_path.exists() or not file_path.is_file():
-        raise HTTPException(status_code=404, detail=f"Source file for '{record.filename}' not found.")
-    return file_path
+    candidates = []
+    if record.source:
+        candidates.append(Path(record.source))
+    candidates.extend(
+        [
+            settings.DOCS_PATH / record.filename,
+            settings.DOCS_PATH / record.user_id / record.filename,
+            settings.DOCS_PATH / record.user_id / record.knowledge_base_id / record.filename,
+        ]
+    )
+
+    for file_path in candidates:
+        if file_path.exists() and file_path.is_file():
+            return file_path
+
+    matches = [
+        path
+        for path in settings.DOCS_PATH.rglob(record.filename)
+        if path.is_file() and path.name == record.filename
+    ]
+    if matches:
+        return matches[0]
+
+    raise HTTPException(status_code=404, detail=f"Source file for '{record.filename}' not found.")
 
 
 def document_info_from_record(record) -> DocumentInfo:
@@ -53,7 +75,7 @@ def document_info_from_record(record) -> DocumentInfo:
         content_type=record.content_type or "application/octet-stream",
         version_hash=record.version_hash,
         parse_status=record.parse_status,
-        summary=record.summary,
+        summary=normalize_document_summary(record.summary),
     )
 
 
@@ -110,6 +132,10 @@ async def index_document(record, index: VectorDatabaseDep, llm_client: LamaCppCl
         chunk.metadata["user_id"] = record.user_id
         chunk.metadata["version_hash"] = version_hash
         chunk.metadata["chunk_index"] = idx
+        if file_path.suffix.lower() == ".pdf":
+            page = infer_chunk_page(chunk.page_content, page_content)
+            if page is not None:
+                chunk.metadata["page"] = page
 
     if record.chunk_ids:
         index.delete_chunks_by_document_id(record.document_id, chunk_ids=record.chunk_ids)
@@ -374,6 +400,10 @@ async def upload_document(
         chunk.metadata["user_id"] = current_user.user_id
         chunk.metadata["version_hash"] = version_hash
         chunk.metadata["chunk_index"] = idx
+        if file_path.suffix.lower() == ".pdf":
+            page = infer_chunk_page(chunk.page_content, page_content)
+            if page is not None:
+                chunk.metadata["page"] = page
 
     num_chunks = len(chunks)
     logger.info(f"Number of generated chunks: {num_chunks}")
@@ -573,6 +603,54 @@ async def get_document_file(
         filename=record.filename,
         content_disposition_type="inline",
     )
+
+
+@router.get("/documents/pdf-page", response_model=PdfPagePreviewResponse)
+async def get_pdf_page_preview_endpoint(
+    session: SessionDep,
+    current_user: CurrentUserDep,
+    filename: str = Query(..., min_length=1),
+    page: int | None = Query(default=None, ge=1),
+    snippet: str | None = Query(default=None),
+):
+    record = get_document_record_by_filename(session, filename, current_user.user_id)
+    file_path = get_source_file_path(record)
+    if file_path.suffix.lower() != ".pdf":
+        raise HTTPException(status_code=400, detail=f"Document '{record.filename}' is not a PDF.")
+
+    try:
+        preview = get_pdf_page_preview(file_path, page, snippet=snippet)
+    except Exception as exc:
+        logger.warning("Failed to build PDF page preview for '%s': %s", record.filename, exc)
+        raise HTTPException(status_code=400, detail=f"Failed to build PDF page preview: {exc}") from exc
+
+    return PdfPagePreviewResponse(
+        document_id=record.document_id,
+        filename=record.filename,
+        **preview,
+    )
+
+
+@router.get("/documents/pdf-page-image")
+async def get_pdf_page_image(
+    session: SessionDep,
+    current_user: CurrentUserDep,
+    filename: str = Query(..., min_length=1),
+    page: int = Query(..., ge=1),
+    scale: float = Query(default=2.0, ge=0.5, le=4.0),
+):
+    record = get_document_record_by_filename(session, filename, current_user.user_id)
+    file_path = get_source_file_path(record)
+    if file_path.suffix.lower() != ".pdf":
+        raise HTTPException(status_code=400, detail=f"Document '{record.filename}' is not a PDF.")
+
+    try:
+        image = render_pdf_page_png(file_path, page, scale=scale)
+    except Exception as exc:
+        logger.warning("Failed to render PDF page for '%s': %s", record.filename, exc)
+        raise HTTPException(status_code=400, detail=f"Failed to render PDF page: {exc}") from exc
+
+    return Response(content=image, media_type="image/png")
 
 
 @router.get("/documents/{document_id}/file")

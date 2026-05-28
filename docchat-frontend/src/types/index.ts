@@ -8,6 +8,8 @@ export interface Citation {
   index: number;
   /** 来源文档名 */
   docName: string;
+  /** 后端 document_id，可用于直接定位文档 */
+  documentId?: string;
   /** 对应页码(可选,某些非分页文档没有) */
   page?: number;
   /** 原文片段(可选,用于右栏 citation-panel 显示与高亮) */

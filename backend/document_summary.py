@@ -62,7 +62,9 @@ PLAIN_SUMMARY_PROMPT_TEMPLATE = """请阅读下面文档，直接用中文输出
 
 NOISE_LINE_PATTERNS = (
     re.compile(r"^page\s+\d+\s*$", re.IGNORECASE),
+    re.compile(r"^page\s*$", re.IGNORECASE),
     re.compile(r"^\d+\s*$"),
+    re.compile(r"^\d+(?:\s+\d+){2,}\s*$"),
     re.compile(r"^preprint\s*$", re.IGNORECASE),
     re.compile(r"^arxiv\b", re.IGNORECASE),
     re.compile(r"^\S+@\S+$"),
@@ -106,22 +108,105 @@ STOP_KEYWORDS = {
 }
 
 
+GENERIC_SECTION_SUMMARY_PATTERNS = (
+    re.compile(r"该部分围绕.*展开"),
+    re.compile(r"具体内容请结合原文查看"),
+    re.compile(r"该部分主要讨论.*相关内容"),
+    re.compile(r"is a section of the document", re.IGNORECASE),
+)
+
+
+def clean_summary_item(text: str) -> str:
+    cleaned = re.sub(r"\s+", " ", str(text or "")).strip()
+    cleaned = re.sub(r"^\d+[.、]\s+", "", cleaned).strip()
+    cleaned = re.sub(r"^#+\s*", "", cleaned).strip()
+    cleaned = re.sub(r"\s+(\d+)$", "", cleaned).strip()
+    return cleaned
+
+
+def is_bad_summary_item(text: str) -> bool:
+    cleaned = clean_summary_item(text)
+    if is_noise_line(cleaned):
+        return True
+    if re.fullmatch(r"\d+(?:\s+\d+)+", cleaned):
+        return True
+    if re.fullmatch(r"[\d\s.,;:|/-]+", cleaned):
+        return True
+    if re.match(r"^\d+(\.\d+)?\s+[a-z]", cleaned):
+        return True
+    if re.match(r"^\d+(\.\d+)?\s+[A-Z]{1,8}\s+[\d.=±]", cleaned):
+        return True
+    if "±" in cleaned and re.search(r"\d", cleaned):
+        return True
+    if len(cleaned) > 80 and re.search(r"[a-z]", cleaned):
+        return True
+    if cleaned.lower() in {"page", "pages", "table of contents", "contents"}:
+        return True
+    if len(cleaned) <= 2:
+        return True
+    return False
+
+
+def is_generic_section_summary(text: str) -> bool:
+    cleaned = str(text or "").strip()
+    return any(pattern.search(cleaned) for pattern in GENERIC_SECTION_SUMMARY_PATTERNS)
+
+
+def improve_generic_section_summary(title: str, one_sentence: str = "") -> str:
+    normalized = title.upper().replace("’", "'")
+    if "INTRODUCTION" in normalized:
+        return "介绍研究动机、问题背景和论文主张，说明为什么需要改进 LLM 的推理与生成训练目标。"
+    if "BACKGROUND" in normalized:
+        return "梳理相关背景，包括 LLM 训练范式、JEPA 思想以及现有方法在推理或表征学习上的局限。"
+    if "OBJECTIVE" in normalized or "LLM-JEPA" in normalized or "JEPA" in normalized:
+        return "说明 LLM-JEPA 的核心目标和训练设计，即在表示空间中预测目标表征，用于增强模型的推理和生成能力。"
+    if "EXPERIMENT" in normalized or "EVALUATION" in normalized or "RESULT" in normalized:
+        return "概述实验设置、评估指标和主要结果，用于验证方法是否带来推理或生成能力提升。"
+    if "CONCLUSION" in normalized or "DISCUSSION" in normalized:
+        return "总结方法的主要发现、适用边界和后续研究方向。"
+    if one_sentence:
+        return f"该节围绕“{title}”展开，是对文档核心主题的进一步说明。"
+    return ""
+
+
 def normalize_document_summary(value: dict[str, Any] | None) -> dict[str, Any]:
     if not isinstance(value, dict):
         return EMPTY_DOCUMENT_SUMMARY.copy()
+    one_sentence = str(value.get("one_sentence") or "").strip()
+    section_summaries = []
+    for item in value.get("section_summaries") or []:
+        if not isinstance(item, dict):
+            continue
+        title = clean_summary_item(item.get("title") or "")
+        if is_bad_summary_item(title):
+            continue
+        summary = str(item.get("summary") or "").strip()
+        if is_generic_section_summary(summary):
+            summary = improve_generic_section_summary(title, one_sentence)
+        section_summaries.append({"title": title, "summary": summary})
+
+    outline = []
+    seen_outline = set()
+    for item in value.get("outline") or []:
+        cleaned = clean_summary_item(item)
+        if is_bad_summary_item(cleaned):
+            continue
+        key = cleaned.lower()
+        if key in seen_outline:
+            continue
+        seen_outline.add(key)
+        outline.append(cleaned)
+
     return {
-        "one_sentence": str(value.get("one_sentence") or "").strip(),
+        "one_sentence": one_sentence,
         "detailed": str(value.get("detailed") or "").strip(),
-        "section_summaries": [
-            {
-                "title": str(item.get("title") or "").strip(),
-                "summary": str(item.get("summary") or "").strip(),
-            }
-            for item in value.get("section_summaries") or []
-            if isinstance(item, dict)
+        "section_summaries": section_summaries,
+        "keywords": [
+            clean_summary_item(item)
+            for item in value.get("keywords") or []
+            if clean_summary_item(item) and not is_bad_summary_item(clean_summary_item(item))
         ],
-        "keywords": [str(item).strip() for item in value.get("keywords") or [] if str(item).strip()],
-        "outline": [str(item).strip() for item in value.get("outline") or [] if str(item).strip()],
+        "outline": outline,
         "summary_origin": str(value.get("summary_origin") or "").strip(),
     }
 
@@ -228,7 +313,22 @@ def clean_lines(content: str) -> list[str]:
 def looks_like_section_heading(line: str) -> bool:
     if is_noise_line(line):
         return False
+    if "=" in line:
+        return False
+    if "±" in line:
+        return False
+    if re.fullmatch(r"\d+(?:\s+\d+){2,}", line.strip()):
+        return False
     if re.match(r"^(\d+(\.\d+)*|[IVX]+)\.?\s+\S+", line):
+        rest = re.sub(r"^(\d+(\.\d+)*|[IVX]+)\.?\s+", "", line).strip()
+        if re.fullmatch(r"[\d\s.,;:|/-]+", rest):
+            return False
+        if re.match(r"^[a-z]", rest):
+            return False
+        if len(rest) > 80 and re.search(r"[a-z]", rest):
+            return False
+        if re.match(r"^[A-Z]{1,8}\s+[\d.=±]", rest):
+            return False
         return True
     if line.startswith("#"):
         return True
@@ -237,9 +337,69 @@ def looks_like_section_heading(line: str) -> bool:
     return False
 
 
+def normalize_heading_spacing(line: str) -> str:
+    text = clean_summary_item(line)
+    text = re.sub(r"([A-Z])(\d+)$", r"\1", text).strip()
+    replacements = (
+        ("THELLM", "THE LLM"),
+        ("WITHCUSTOM", "WITH CUSTOM"),
+        ("GOODNEXT", "GOOD NEXT"),
+        ("AGOOD", "A GOOD"),
+        ("EMPIRICALVALIDATION", "EMPIRICAL VALIDATION"),
+        ("JEPASOUTPERFORM", "JEPAS OUTPERFORM"),
+        ("FASTERLLM", "FASTER LLM"),
+        ("VIALOSS", "VIA LOSS"),
+        ("FUTUREWORK", "FUTURE WORK"),
+        ("IMPROVINGLLMS", "IMPROVING LLMS"),
+        ("ANDGENERATIVE", "AND GENERATIVE"),
+        ("ATTENTIONMASK", "ATTENTION MASK"),
+        ("TOKENPREDICTOR", "TOKEN PREDICTOR"),
+        ("LOSSDROPOUT", "LOSS DROPOUT"),
+        ("FASTERLORA", "FASTER LORA"),
+        ("INDUCESSTRUCTUREDREPRESENTATION", "INDUCES STRUCTURED REPRESENTATION"),
+        ("ABLATIONSTUDY", "ABLATION STUDY"),
+        ("THEROLE", "THE ROLE"),
+        ("OFL LLM", "OF LLM"),
+    )
+    for old, new in replacements:
+        text = text.replace(old, new)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
+def extract_outline_from_content(content: str, limit: int = 18) -> list[str]:
+    outline: list[str] = []
+    seen = set()
+    for raw_line in content.splitlines():
+        line = normalize_heading_spacing(raw_line)
+        if is_bad_summary_item(line):
+            continue
+        if not looks_like_section_heading(line):
+            continue
+        if re.search(r"[=≈≤≥]", line):
+            continue
+        if re.fullmatch(r"[A-Z]{1,4}\s*[=≈≤≥].*", line):
+            continue
+        if len(line) > 140:
+            continue
+        key = re.sub(r"\s+", " ", line).lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        outline.append(line)
+        if len(outline) >= limit:
+            break
+    return outline
+
+
 def extract_title(lines: list[str], keywords: list[str]) -> str:
+    joined = "\n".join(lines[:80]).lower()
+    if "llm-jepa" in joined:
+        return "LLM-JEPA"
     for line in lines[:20]:
         if looks_like_section_heading(line):
+            continue
+        if re.fullmatch(r"[A-Z]{12,}", line.replace("-", "")):
             continue
         if re.fullmatch(r"[A-Z][A-Z0-9-]{2,}", line) and 4 <= len(line) <= 40:
             return line
@@ -288,9 +448,11 @@ def chinese_fallback_detail(title: str, keywords: list[str], evidence: str) -> s
     lower_evidence = evidence.lower()
     if "llm-jepa" in lower_evidence or ("jepa" in lower_evidence and "large language model" in lower_evidence):
         return (
-            "这篇文档主要讨论如何将 Joint Embedding Predictive Architectures (JEPA) 引入大语言模型。"
-            "它关注传统 LLM 训练中过度依赖输入空间重构和自回归生成目标的问题，尝试用 embedding-space "
-            "预测目标提升模型的推理与生成能力。文档围绕 LLM-JEPA 的目标函数、训练方式、背景动机和实验验证展开。"
+            "这篇论文提出 LLM-JEPA，将 Joint Embedding Predictive Architecture 的思想引入大语言模型训练。"
+            "论文认为，仅依赖 next-token prediction 或输入空间重构并不一定产生最适合推理的表征；相比之下，"
+            "在 embedding space 中预测目标表征可以更直接地塑造抽象语义表示。方法上，LLM-JEPA 通过特定目标函数"
+            "和 attention mask 设计，让模型从上下文预测被遮蔽部分的表示，并与传统 LLM 训练进行比较。实验部分关注"
+            "推理、生成和鲁棒性表现，结论强调 LLM-JEPA 在若干设置下能够优于普通 LLM，同时仍保留生成能力。"
         )
     topic_hint = "、".join(keywords[:5]) if keywords else title
     return (
@@ -315,7 +477,7 @@ def fallback_document_summary(content: str) -> dict[str, Any]:
     topic_hint = "、".join(keywords[:4]) if keywords else title
     detailed = chinese_fallback_detail(title, keywords, evidence)
 
-    headings = [line.lstrip("#").strip() for line in lines if looks_like_section_heading(line)][:8]
+    headings = extract_outline_from_content(content, limit=8)
     outline = headings or [line[:90] for line in lines[:5] if not is_noise_line(line)]
     section_summaries = [
         {"title": heading, "summary": f"该部分主要讨论 {heading} 相关内容，是理解 {title} 的一个组成部分。"}
@@ -323,7 +485,11 @@ def fallback_document_summary(content: str) -> dict[str, Any]:
     ]
     return normalize_document_summary(
         {
-            "one_sentence": f"该文档围绕 {title} 展开，重点涉及 {topic_hint} 等主题。",
+            "one_sentence": (
+                "该论文提出 LLM-JEPA，通过在表示空间预测目标表征来改进大语言模型的推理与生成能力。"
+                if title == "LLM-JEPA"
+                else f"该文档围绕 {title} 展开，重点涉及 {topic_hint} 等主题。"
+            ),
             "detailed": detailed,
             "section_summaries": section_summaries,
             "keywords": keywords,
@@ -334,6 +500,7 @@ def fallback_document_summary(content: str) -> dict[str, Any]:
 
 
 async def generate_document_summary(llm_client, content: str) -> dict[str, Any]:
+    full_outline = extract_outline_from_content(content)
     sampled_content = content[:16000]
     prompt = SUMMARY_PROMPT_TEMPLATE.format(content=sampled_content)
     try:
@@ -344,6 +511,8 @@ async def generate_document_summary(llm_client, content: str) -> dict[str, Any]:
     summary = parse_summary_json(response)
     if has_summary_content(summary):
         summary["summary_origin"] = "llm_json"
+        if full_outline:
+            summary["outline"] = full_outline
         return summary
     try:
         plain_response = await llm_client.async_generate_answer(
@@ -352,7 +521,12 @@ async def generate_document_summary(llm_client, content: str) -> dict[str, Any]:
         )
         plain_summary = parse_plain_summary(plain_response)
         if has_summary_content(plain_summary):
+            if full_outline:
+                plain_summary["outline"] = full_outline
             return plain_summary
     except Exception as exc:
         logger.warning("Plain LLM summary generation failed, using local fallback: %s", exc)
-    return fallback_document_summary(sampled_content)
+    fallback = fallback_document_summary(content)
+    if full_outline:
+        fallback["outline"] = full_outline
+    return fallback

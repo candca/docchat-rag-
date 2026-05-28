@@ -44,6 +44,16 @@ class DocumentContentResponse(BaseModel):
     content: str
 
 
+class PdfPagePreviewResponse(BaseModel):
+    document_id: str
+    filename: str
+    page: int
+    page_count: int
+    width: float
+    height: float
+    boxes: list[list[float]] = Field(default_factory=list)
+
+
 class KnowledgeBaseInfo(BaseModel):
     knowledge_base_id: str
     name: str

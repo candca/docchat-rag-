@@ -44,6 +44,8 @@ function parseCitations(retrievalText: string): Citation[] {
   return blocks
     .map((block, i) => {
       const docName = block.match(/^([^*\n]+?)\*\*/)?.[1]?.trim() ?? ''
+      const documentId = block.match(/\*\*Document ID:\*\*\s*([^\n]+)/)?.[1]?.trim()
+      const metadataPage = block.match(/\*\*Page:\*\*\s*(\d+)/)?.[1]
       // Preview 后的内容属于当前 source block；完整 chunk 可能包含空行。
       const rawSnippet = block
         .match(/\*\*Preview:\*\*\s*\n?\s*>?\s*([\s\S]+)$/)?.[1]
@@ -56,8 +58,9 @@ function parseCitations(retrievalText: string): Citation[] {
       return {
         index: i + 1,
         docName,
+        documentId,
         snippet,
-        page: page ? Number(page) : undefined,
+        page: metadataPage ? Number(metadataPage) : page ? Number(page) : undefined,
       } as Citation
     })
     .filter((c) => c.docName.length > 0)

@@ -94,6 +94,16 @@ export interface DocumentContentResponse {
   content: string
 }
 
+export interface PdfPagePreviewResponse {
+  document_id: string
+  filename: string
+  page: number
+  page_count: number
+  width: number
+  height: number
+  boxes: number[][]
+}
+
 export interface DocumentSummary {
   one_sentence: string
   detailed: string
@@ -195,6 +205,24 @@ export function getDocumentFileUrl(filename: string): string {
   const token = getAuthToken()
   if (token) params.set('token', token)
   return `${API_BASE}/documents/file?${params.toString()}`
+}
+
+export async function getPdfPagePreview(
+  filename: string,
+  page?: number,
+  snippet?: string,
+): Promise<PdfPagePreviewResponse> {
+  const response = await api.get<PdfPagePreviewResponse>('/documents/pdf-page', {
+    params: { filename, page, snippet },
+  })
+  return response.data
+}
+
+export function getPdfPageImageUrl(filename: string, page: number, scale = 2): string {
+  const params = new URLSearchParams({ filename, page: String(page), scale: String(scale) })
+  const token = getAuthToken()
+  if (token) params.set('token', token)
+  return `${API_BASE}/documents/pdf-page-image?${params.toString()}`
 }
 
 export function getDocumentFileUrlById(documentId: string): string {

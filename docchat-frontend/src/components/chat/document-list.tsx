@@ -8,6 +8,7 @@ import {
   FileText,
   FileType2,
   ListTree,
+  Maximize2,
   MoreHorizontal,
   Plus,
   RefreshCw,
@@ -121,6 +122,7 @@ export function DocumentList({
   const [editingKbId, setEditingKbId] = useState<string | null>(null);
   const [editingKbName, setEditingKbName] = useState("");
   const [sourceDoc, setSourceDoc] = useState<Document | null>(null);
+  const [expandedSummaryDoc, setExpandedSummaryDoc] = useState<Document | null>(null);
   const selectedSet = new Set(selectedDocIds ?? []);
   const selectedCount = selectedSet.size;
   const readyCount = documents.filter((d) => d.status === "ready").length;
@@ -252,7 +254,7 @@ export function DocumentList({
       <DocumentUpload onSelectFile={onUpload} />
 
       {/* 列表区 */}
-      <div className="flex-1 overflow-y-auto px-3 pb-4">
+      <div className="max-h-[26vh] min-h-[120px] shrink-0 overflow-y-auto px-3 pb-4">
         {documents.length === 0 ? (
           <div className="flex flex-col items-center justify-center px-4 py-12 text-center">
             <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-muted text-muted-foreground/50">
@@ -436,6 +438,7 @@ export function DocumentList({
           document={activeDocument}
           onGenerateSummary={onGenerateSummary}
           isSummarizing={summarizingDocId === activeDocument.id}
+          onExpand={() => setExpandedSummaryDoc(activeDocument)}
         />
       )}
 
@@ -476,6 +479,33 @@ export function DocumentList({
           </div>
         </div>
       )}
+
+      {expandedSummaryDoc && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/75 p-4 backdrop-blur-sm">
+          <div className="flex h-[92vh] w-[min(92vw,920px)] flex-col overflow-hidden rounded-lg border border-border bg-background shadow-2xl">
+            <div className="flex h-12 shrink-0 items-center justify-between border-b border-border px-4">
+              <div className="min-w-0">
+                <p className="truncate text-sm font-semibold text-foreground">{expandedSummaryDoc.name}</p>
+                <p className="text-[11px] text-muted-foreground">完整文档详情</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setExpandedSummaryDoc(null)}
+                className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+                aria-label="关闭完整文档详情"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <DocumentSummaryPanel
+              document={expandedSummaryDoc}
+              onGenerateSummary={onGenerateSummary}
+              isSummarizing={summarizingDocId === expandedSummaryDoc.id}
+              expanded
+            />
+          </div>
+        </div>
+      )}
     </aside>
   );
 }
@@ -495,19 +525,38 @@ function DocumentSummaryPanel({
   document,
   onGenerateSummary,
   isSummarizing,
+  onExpand,
+  expanded = false,
 }: {
   document: Document;
   onGenerateSummary?: (id: string) => void;
   isSummarizing?: boolean;
+  onExpand?: () => void;
+  expanded?: boolean;
 }) {
   const summary = document.summary;
   const hasContent = hasSummaryContent(summary);
 
   return (
-    <div className="max-h-[34%] overflow-y-auto border-t border-border bg-background/70 px-4 py-3">
+    <div
+      className={cn(
+        "min-h-0 flex-1 overflow-y-auto bg-background/70 px-4 py-3",
+        expanded ? "border-0 pb-10" : "border-t border-border pb-24",
+      )}
+    >
       <div className="mb-2 flex items-center justify-between">
         <h3 className="text-[12px] font-bold uppercase tracking-wider text-muted-foreground">文档详情</h3>
         <div className="flex min-w-0 items-center gap-2">
+          {!expanded && onExpand && (
+            <button
+              type="button"
+              onClick={onExpand}
+              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+              title="展开完整文档详情"
+            >
+              <Maximize2 className="h-3.5 w-3.5" />
+            </button>
+          )}
           {summary?.summary_origin === "local_fallback" && (
             <span className="shrink-0 rounded bg-amber-500/10 px-1.5 py-0.5 text-[10px] text-amber-600 dark:text-amber-400">
               本地兜底

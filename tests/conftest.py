@@ -1,16 +1,114 @@
 from pathlib import Path
 
+import api.endpoints.chat_stream as chat_stream_endpoint
 import pytest
 from alembic import command
 from alembic.config import Config
-from api.deps import get_db_session, get_index, get_llm_client
-from bot.client.lama_cpp_client import LamaCppClient
-from bot.memory.embedder import Embedder
-from bot.memory.vector_database.chroma import Chroma
-from bot.model.model_registry import Model, get_model_settings
+from api.deps import get_current_user, get_db_session, get_index, get_llm_client
+from auth import User
+from entities.document import Document
 from main import app
 from sqlmodel import Session, create_engine
 from starlette.testclient import TestClient
+
+
+class MockModelSettings:
+    reasoning = False
+    reasoning_stop_tag = None
+    system_template = "You are a test assistant."
+    config_answer = {}
+
+
+class MockLamaCppClient:
+    """Small deterministic LLM stand-in for tests.
+
+    It mirrors the LamaCppClient surface used by API and client tests without
+    downloading or loading a real GGUF model.
+    """
+
+    model_settings = MockModelSettings()
+
+    def generate_answer(self, prompt: str, max_new_tokens: int = 512) -> str:
+        return "Rome is the capital city of Italy. This is a deterministic test answer."
+
+    async def async_generate_answer(self, prompt: str, max_new_tokens: int = 512) -> str:
+        return self.generate_answer(prompt, max_new_tokens=max_new_tokens)
+
+    def start_answer_iterator_streamer(self, prompt: str, max_new_tokens: int = 512):
+        tokens = ["Rome", " is", " the", " capital", " city", " of", " Italy", ".", " Test", " answer", "."]
+        for token in tokens:
+            yield {"choices": [{"delta": {"content": token}}]}
+
+    async def async_start_answer_iterator_streamer(self, prompt: str, max_new_tokens: int = 512):
+        return self.start_answer_iterator_streamer(prompt, max_new_tokens=max_new_tokens)
+
+    def stream_answer(self, prompt: str, max_new_tokens: int = 512) -> str:
+        return "".join(
+            self.parse_token(output)
+            for output in self.start_answer_iterator_streamer(prompt, max_new_tokens)
+        )
+
+    def generate_qa_prompt(self, question: str) -> str:
+        return question
+
+    def generate_refined_answer_conversation_awareness_prompt(self, question: str, chat_history: str) -> str:
+        return f"{chat_history}\n{question}"
+
+    def generate_refined_question_conversation_awareness_prompt(self, question: str, chat_history: str) -> str:
+        return question
+
+    def generate_ctx_prompt(self, question: str, context: str) -> str:
+        return f"{context}\n{question}"
+
+    def generate_refined_ctx_prompt(self, question: str, context: str, chat_history: str) -> str:
+        return f"{chat_history}\n{context}\n{question}"
+
+    @staticmethod
+    def parse_token(output) -> str:
+        return output["choices"][0]["delta"].get("content", "")
+
+    def close(self):
+        return None
+
+
+class MockVectorIndex:
+    def __init__(self):
+        self.chunks: list[Document] = [
+            Document(
+                page_content="DocChat is a RAG chatbot test document about retrieval and answering.",
+                metadata={"source": "test.md", "document_id": "doc-test", "chunk_index": 0, "user_id": "test-user"},
+            )
+        ]
+
+    def similarity_search_with_relevance_scores(self, query: str, k: int = 20, filter=None):
+        return [(chunk, 0.9) for chunk in self._filtered_chunks(filter)[:k]]
+
+    def get_chunks(self, where=None, limit: int = 1000):
+        return self._filtered_chunks(where)[:limit]
+
+    def get_chunks_by_document_id(self, document_id: str, limit: int = 3, user_id: str | None = None):
+        return [
+            chunk
+            for chunk in self.chunks
+            if chunk.metadata.get("document_id") == document_id
+            and (user_id is None or chunk.metadata.get("user_id") == user_id)
+        ][:limit]
+
+    def from_chunks(self, chunks: list[Document]):
+        start = len(self.chunks)
+        self.chunks.extend(chunks)
+        return [f"chunk-{index}" for index in range(start, start + len(chunks))]
+
+    def delete_chunks_by_document_id(self, document_id: str, chunk_ids=None):
+        self.chunks = [chunk for chunk in self.chunks if chunk.metadata.get("document_id") != document_id]
+
+    def _filtered_chunks(self, where=None):
+        if not where:
+            return list(self.chunks)
+        user_id = where.get("user_id") if isinstance(where, dict) else None
+        if user_id is None:
+            return list(self.chunks)
+        return [chunk for chunk in self.chunks if chunk.metadata.get("user_id") == user_id]
 
 
 @pytest.fixture(scope="session")
@@ -31,19 +129,17 @@ def cpu_config():
 
 @pytest.fixture(scope="session")
 def model_settings(cpu_config):
-    model_setting = get_model_settings(Model.LLAMA_3_2_one.value)
-    model_setting.config = cpu_config
-    return model_setting
+    return MockModelSettings()
 
 
 @pytest.fixture(scope="session")
 def lamacpp_client(mock_models_folder, model_settings):
-    return LamaCppClient(mock_models_folder, model_settings)
+    return MockLamaCppClient()
 
 
 @pytest.fixture
 def chroma_instance(tmp_path):
-    return Chroma(embedding=Embedder(), persist_directory=str(tmp_path), is_persistent=True)
+    return MockVectorIndex()
 
 
 @pytest.fixture(scope="session")
@@ -97,7 +193,14 @@ def session_fixture(db_engine) -> Session:
 
 
 @pytest.fixture(name="client_with_overridden_deps")
-def client_fixture(session: Session, lamacpp_client: LamaCppClient, chroma_instance: Chroma):
+def client_fixture(
+    session: Session,
+    lamacpp_client: MockLamaCppClient,
+    chroma_instance: MockVectorIndex,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    test_user = User(user_id="test-user", username="testuser", password_hash="unused")
+
     def get_db_session_override():
         return session
 
@@ -107,9 +210,17 @@ def client_fixture(session: Session, lamacpp_client: LamaCppClient, chroma_insta
     def get_index_client_override():
         return chroma_instance
 
+    def get_current_user_override():
+        return test_user
+
+    def get_current_user_from_ws_override(session: Session, token: str | None = None):
+        return test_user
+
     app.dependency_overrides[get_db_session] = get_db_session_override
     app.dependency_overrides[get_llm_client] = get_llm_client_override
     app.dependency_overrides[get_index] = get_index_client_override
+    app.dependency_overrides[get_current_user] = get_current_user_override
+    monkeypatch.setattr(chat_stream_endpoint, "get_current_user_from_ws", get_current_user_from_ws_override)
 
     client = TestClient(app)
 
